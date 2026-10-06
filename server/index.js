@@ -5,13 +5,16 @@
 //   3) 관리자 화면용: 사용자 목록·승인·거절·사용 중지
 //   4) 이름: Google 이름을 받아 두고, 직원이 직접 고친 이름(예: 홍길동 대리)을 표시 이름으로 씀
 //   5) 법인카드 목록: 관리자가 앱에서 고치고(POST /v1/admin/cards), 모든 직원은 로그인·토큰 갱신 때 함께 받음
-// 5단계에서 추가: POST /v1/ocr (DeepSeek 판독)
+//   6) AI 판독: POST /v1/ocr (승인된 계정만, 계정별 하루 상한). 사진은 DeepSeek에 보내기만 하고 저장하지 않음
 //
 // 환경변수
 //   GOOGLE_CLIENT_ID      OAuth 클라이언트 ID (공개값)
 //   GOOGLE_CLIENT_SECRET  OAuth 클라이언트 보안 비밀 (Secret Manager에서 주입)
 //   ADMIN_EMAILS          관리자 Gmail(쉼표 구분). 관리자는 자동 승인
 //   ALLOWED_ORIGINS       쉼표 구분. 기본값 https://nkmro.github.io
+//   DEEPSEEK_API_KEY      DeepSeek API 키 (Secret Manager에서 주입)
+//   DEEPSEEK_MODEL        기본값 deepseek-flash
+//   OCR_DAILY_LIMIT       계정별 하루 판독 상한. 기본값 300
 //
 // 서버는 토큰을 저장하지 않습니다. refresh token은 사용자 기기에만 있고,
 // 새 access token이 필요할 때 앱이 이 서버에 보내 교환합니다(교환에 client_secret이 필요하기 때문).
@@ -34,6 +37,11 @@ const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 const USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo';
 const MAX_BODY = 64 * 1024;
+const OCR_MAX_BODY = 4 * 1024 * 1024;   // 영수증 사진(약 1300px JPEG, base64) 1장
+const DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions';
+const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY || '';
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-flash';
+const OCR_DAILY_LIMIT = Number(process.env.OCR_DAILY_LIMIT || 300);   // 계정별 하루 판독 상한
 const STATUSES = ['pending', 'approved', 'rejected', 'disabled'];
 const NAME_MAX = 30;
 
@@ -81,7 +89,8 @@ function fail(res, status, code, message, extra) {
   send(res, status, { error: Object.assign({ code, message }, extra || {}) });
 }
 
-function readJson(req) {
+function readJson(req, limit) {
+  limit = limit || MAX_BODY;
   // Cloud Run 함수(functions-framework)는 JSON 본문을 미리 읽어 req.body에 넣어 줌
   if (req.body !== undefined && !Buffer.isBuffer(req.body)) {
     return Promise.resolve(req.body && typeof req.body === 'object' ? req.body : {});
@@ -91,7 +100,7 @@ function readJson(req) {
     const chunks = [];
     req.on('data', c => {
       size += c.length;
-      if (size > MAX_BODY) { reject(Object.assign(new Error('too large'), { status: 413 })); req.destroy(); return; }
+      if (size > limit) { reject(Object.assign(new Error('too large'), { status: 413 })); req.destroy(); return; }
       chunks.push(c);
     });
     req.on('end', () => {
@@ -311,6 +320,109 @@ async function adminSetCards(req, res) {
   send(res, 200, { ok: true, cards: list });
 }
 
+
+// ── AI 판독(DeepSeek) ──
+// 사진은 DeepSeek에 보내기만 하고 서버에는 저장하지 않음. 결과(JSON)만 앱에 돌려줌
+const OCR_PROMPT = `이 이미지는 한국 영수증(카드 매출전표 포함)입니다. 아래 형식의 json으로만 답하세요.
+- 이미지가 90도, 180도, 270도 회전되어 있을 수 있습니다. 먼저 글자 방향을 판단하고, 올바른 방향으로 읽으세요.
+- tx_date·tx_time: 영수증에 인쇄된 결제(승인) 일시. 없거나 읽을 수 없으면 null.
+- amount: 최종 결제 금액(합계). 원 단위 정수, 쉼표 없이. 취소 영수증이면 note에 "취소"라고 적으세요.
+- merchant: 가맹점(상호)명. address: 가맹점 주소.
+- pay_method: "card"(카드 결제) / "cash"(현금·현금영수증) / null(알 수 없음).
+- card_company: 카드사 이름(예: 신한카드, KB국민카드, 하나카드). 인쇄된 그대로. 없으면 null.
+- card_number: 인쇄된 카드 번호를 * 포함 그대로(예: "5310-12**-****-9798"). 없으면 null.
+- 승인번호, 전화번호, 사업자번호는 출력하지 마세요.
+- 확실하지 않은 값은 추측하지 말고 null로 두고, 해당 항목의 confidence를 "low"로 하세요.
+예시:
+{"is_receipt": true, "tx_date": "2026-09-28", "tx_time": "19:40", "amount": 32000,
+ "merchant": "○○식당", "address": "서울 중구 ○○로 12", "pay_method": "card",
+ "card_company": "신한카드", "card_number": "4518-44**-****-1234",
+ "confidence": {"tx_date": "high", "amount": "high", "merchant": "high", "address": "low"},
+ "note": null}`;
+
+function str(v, max) { if (v == null) return null; const s = String(v).replace(/[\u0000-\u001f]/g, ' ').trim(); return s ? s.slice(0, max || 100) : null; }
+function cleanOcr(o) {
+  o = o && typeof o === 'object' ? o : {};
+  let amount = o.amount;
+  if (typeof amount === 'string') amount = Number(amount.replace(/[^\d.-]/g, ''));
+  amount = Number.isFinite(amount) && amount > 0 ? Math.round(amount) : null;
+  const dm = /^(\d{2}|\d{4})[-./](\d{1,2})[-./](\d{1,2})$/.exec(String(o.tx_date || '').trim());   // 2026-10-05, 2026.10.05, 26/10/05
+  const date = dm ? (dm[1].length === 2 ? '20' + dm[1] : dm[1]) + '-' + dm[2].padStart(2, '0') + '-' + dm[3].padStart(2, '0') : null;
+  const time = /^\d{1,2}:\d{2}/.test(String(o.tx_time || '')) ? String(o.tx_time).slice(0, 5).padStart(5, '0') : null;
+  const conf = {};
+  ['tx_date', 'amount', 'merchant', 'address'].forEach(k => { conf[k] = o.confidence && o.confidence[k] === 'high' ? 'high' : 'low'; });
+  const num = str(o.card_number, 30);
+  return {
+    isReceipt: o.is_receipt !== false,
+    txDate: date, txTime: time, amount,
+    merchant: str(o.merchant, 60), address: str(o.address, 100),
+    payMethod: o.pay_method === 'card' || o.pay_method === 'cash' ? o.pay_method : null,
+    cardCompany: str(o.card_company, 20),
+    cardNumber: num && /^[\d*\-\s]+$/.test(num) ? num.replace(/\s/g, '') : null,   // 숫자·* 외의 글자는 버림
+    confidence: conf,
+    note: str(o.note, 100)
+  };
+}
+
+// 계정별 하루 판독 횟수(한국 날짜 기준). 넘으면 false
+async function countOcr(email) {
+  const day = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+  const ref = users().doc(email);
+  return firestore().runTransaction(async t => {
+    const snap = await t.get(ref);
+    const d = snap.exists ? snap.data() : {};
+    const n = d.ocrDay === day ? Number(d.ocrCount || 0) : 0;
+    if (n >= OCR_DAILY_LIMIT) return false;
+    t.set(ref, { ocrDay: day, ocrCount: n + 1, ocrTotal: FieldValue.increment(1) }, { merge: true });
+    return true;
+  });
+}
+
+// POST /v1/ocr  {image: base64 JPEG}   Authorization: Bearer <id token>
+async function ocr(req, res) {
+  const h = req.headers.authorization || '';
+  const m = h.match(/^Bearer\s+(.+)$/i);
+  if (!m) return fail(res, 401, 'INVALID_TOKEN', '다시 로그인해 주세요');
+  let ident;
+  try { ident = await identityFromIdToken(m[1]); } catch (e) { return fail(res, 401, 'INVALID_TOKEN', '다시 로그인해 주세요'); }
+  const snap = await users().doc(ident.email).get();
+  if (!isAdmin(ident.email) && !(snap.exists && snap.data().status === 'approved')) return fail(res, 403, 'NOT_APPROVED', '사용 승인이 필요합니다');
+  if (!DEEPSEEK_KEY) return fail(res, 503, 'NO_KEY', 'AI 판독이 아직 설정되지 않았습니다');
+  const { image } = await readJson(req, OCR_MAX_BODY);
+  if (typeof image !== 'string' || image.length < 100 || !/^[A-Za-z0-9+/=]+$/.test(image)) return fail(res, 400, 'BAD_IMAGE', '사진 형식 오류');
+  if (image.length > OCR_MAX_BODY) return fail(res, 413, 'TOO_LARGE', '사진이 너무 큽니다');   // Cloud Run 함수는 본문을 미리 읽으므로 여기서 다시 확인
+  if (!(await countOcr(ident.email))) return fail(res, 429, 'DAILY_LIMIT', '오늘 판독 횟수(' + OCR_DAILY_LIMIT + '장)를 다 썼습니다. 직접 입력해 주세요');
+  const body = {
+    model: DEEPSEEK_MODEL,
+    messages: [{ role: 'user', content: [
+      { type: 'text', text: OCR_PROMPT },
+      { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + image, detail: 'auto' } }
+    ] }],
+    response_format: { type: 'json_object' },
+    max_tokens: 800,
+    temperature: 0
+  };
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 90000);
+  let r, data;
+  try {
+    r = await fetch(DEEPSEEK_URL, { method: 'POST', signal: ctl.signal,
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + DEEPSEEK_KEY }, body: JSON.stringify(body) });
+    data = await r.json().catch(() => ({}));
+  } catch (e) {
+    console.warn('deepseek fetch failed', e && e.name);
+    return fail(res, 504, 'AI_TIMEOUT', 'AI 응답이 늦습니다. 잠시 후 다시 시도해 주세요');
+  } finally { clearTimeout(timer); }
+  if (!r.ok) {
+    console.warn('deepseek error', r.status, data && data.error && data.error.message);
+    return fail(res, 502, 'AI_ERROR', 'AI 판독 오류(' + r.status + ')');
+  }
+  const raw = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content || '';
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch (e) { return fail(res, 502, 'AI_BAD_JSON', 'AI 답을 읽지 못했습니다'); }
+  send(res, 200, { result: cleanOcr(parsed) });
+}
+
 const routes = {
   'POST /v1/auth/exchange': exchange,
   'POST /v1/auth/refresh': refresh,
@@ -319,6 +431,7 @@ const routes = {
   'GET /v1/admin/users': adminList,
   'POST /v1/admin/users/status': adminSetStatus,
   'POST /v1/admin/cards': adminSetCards,
+  'POST /v1/ocr': ocr,
   // Cloud Run은 /healthz 주소를 자체 용도로 예약해 쓰므로 다른 이름을 씀
   'GET /v1/health': (req, res) => send(res, 200, { ok: true })
 };
@@ -344,9 +457,10 @@ async function app(req, res) {
 }
 
 if (!CLIENT_ID || !CLIENT_SECRET) console.warn('GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET 환경변수가 없습니다');
+if (!DEEPSEEK_KEY) console.warn('DEEPSEEK_API_KEY 환경변수가 없습니다(AI 판독 꺼짐)');
 if (!ADMIN_EMAILS.length) console.warn('ADMIN_EMAILS 환경변수가 없습니다(관리자 없음)');
 // Cloud Run 함수로 배포할 때: 진입점(함수 이름) = relay
 exports.relay = app;
-exports._test = { setDb: d => { db = d; }, isAdmin, cleanName };
+exports._test = { setDb: d => { db = d; }, isAdmin, cleanName, cleanOcr };
 // 직접 실행할 때(node index.js): 일반 HTTP 서버
 if (require.main === module) http.createServer(app).listen(PORT, () => console.log('listening on', PORT));
