@@ -289,10 +289,32 @@
         (has ? '<div class="pc-btns"><a class="mini" href="https://drive.google.com/file/d/' + encodeURIComponent(k) + '/view" target="_blank" rel="noopener">PDF 열기</a>' +
           '<button class="mini ok" type="button" data-remake="' + esc(k) + '">다시 만들기</button>' +
           '<button class="mini" type="button" data-unclaim="' + esc(k) + '">전체 되돌리기</button></div>' : '') +
+        (has && B.cat === '출장비' ? gapjiRow(k) : '') +
         '<button class="pc-toggle" type="button" data-open="' + esc(k) + '">' + (open ? '영수증 접기 ▴' : '영수증 ' + g.length + '건 보기 ▾') + '</button>' +
         (open ? '<div class="pc-list">' + g.map(row).join('') + '</div>' : '') +
       '</div>';
     }).join('');
+  }
+
+  // 출장비: 결재 끝난 지출결의서(갑지)를 청구 PDF 앞에 붙인 합본(새 파일)
+  var merged = {};
+  function mergedOf(id) {
+    if (merged[id] !== undefined) return merged[id];
+    try { var c = JSON.parse(localStorage.getItem('rs.merged.' + id) || 'null'); if (c) { merged[id] = c; return c; } } catch (e) { /* 무시 */ }
+    merged[id] = null;
+    ctx.findMerged(id).then(function (f) {
+      if (!f) return;
+      merged[id] = f; try { localStorage.setItem('rs.merged.' + id, JSON.stringify(f)); } catch (e) { /* 무시 */ }
+      if (ctx.isActive()) ctx.rerender();
+    }).catch(function () { delete merged[id]; });
+    return null;
+  }
+  function gapjiRow(k) {
+    var m = mergedOf(k), busy = B.gapjiBusy === k;
+    return '<div class="pc-gapji">' + (m ? '<div class="pc-gname">' + esc(m.name) + '</div>' : '<div class="pc-ghint">결재가 끝난 출장비 지출결의서를 출력(PDF)해 붙이면 "갑지+영수증" PDF를 따로 만듭니다.</div>') +
+      '<div class="pc-btns">' + (m ? '<a class="mini ok" href="https://drive.google.com/file/d/' + encodeURIComponent(m.id) + '/view" target="_blank" rel="noopener">갑지+영수증 열기</a>' : '') +
+      '<label class="mini' + (m ? '' : ' ok') + (busy ? ' dis' : '') + '"><input type="file" accept="application/pdf,.pdf" data-gapji="' + esc(k) + '" hidden' + (busy ? ' disabled' : '') + '>' +
+        (busy ? '만드는 중…' : m ? '갑지 다시 붙이기' : '결재 갑지 붙이기') + '</label></div></div>';
   }
 
   // 청구 PDF 파일명(Drive에서 한 번 읽어 폰에 기억)
@@ -313,6 +335,15 @@
   function bind(root, checkable, list) {
     root.querySelectorAll('[data-open]').forEach(function (b) {
       b.onclick = function () { var k = b.dataset.open; B.open[k] = !B.open[k]; ctx.rerender(); };
+    });
+    root.querySelectorAll('[data-gapji]').forEach(function (inp) {
+      inp.onchange = function () {
+        var f = inp.files && inp.files[0], id = inp.dataset.gapji; if (!f) return;
+        B.gapjiBusy = id; ctx.rerender();
+        ctx.mergeGapji(id, f, merged[id] || null).then(function (r) {
+          if (r) { merged[id] = r; try { localStorage.setItem('rs.merged.' + id, JSON.stringify(r)); } catch (e) { /* 무시 */ } }
+        }).catch(function () {}).then(function () { B.gapjiBusy = null; ctx.rerender(); });
+      };
     });
     root.querySelectorAll('[data-remake]').forEach(function (b) {
       b.onclick = function () {

@@ -6,7 +6,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '0.16.3';
+  var APP_VERSION = '0.17.0';
   var CATEGORIES = ['경비', '접대비', '회의비', '출장비'];
   var CACHE_KEY = 'rs.cache.receipts';
   var SET_KEY = 'rs.cache.settings';
@@ -476,6 +476,8 @@
       startPreview: function (sel) { state.selection = sel; location.hash = '#/preview'; },
       setMonth: function (y, m) { view = { y: y, m: m }; render(); },
       fileInfo: function (id) { return RSStore.fileInfo(id); },
+      findMerged: function (id) { return RSStore.findMerged(id); },
+      mergeGapji: mergeGapji,
       unclaimAll: function (ids) {
         RSStore.setClaimStatus(state.ws, ids.map(function (id) { return { id: id, status: '보관중', pdfId: '', claimedAt: '', expect: ['청구완료'] }; }), localIsoNow())
           .then(function (r) { toast(ids.length - r.skipped.length + '건을 보관중으로 되돌렸습니다'); refresh(); })
@@ -580,6 +582,49 @@
     } catch (e) {
       toast(e.message || '처리하지 못했습니다');
       render();
+      throw e;
+    }
+  }
+
+  // 출장비: 결재 갑지 PDF + 청구(영수증) PDF → "갑지+영수증" 새 파일(같은 청구본 폴더). 이미 있으면 그 파일 내용을 바꿈
+  async function mergeGapji(pdfId, file, existing) {
+    try {
+      if (!navigator.onLine || !state.ws) throw new Error('온라인에서만 만들 수 있습니다');
+      toast('갑지를 붙이는 중…');
+      var gbuf = await file.arrayBuffer();
+      if (await RSPdf.isEncrypted(gbuf)) {
+        var plain = null, pw = '';
+        for (var tries = 0; tries < 3 && !plain; tries++) {
+          try { plain = await RSPdf.unlock(gbuf, pw); }
+          catch (e) {
+            if (!e.pw) throw e;
+            pw = prompt((e.pw === 'wrong' ? '비밀번호가 맞지 않습니다. ' : '') + '갑지 PDF 비밀번호를 입력해 주세요 (저장하지 않음)');
+            if (pw === null) return null;
+          }
+        }
+        if (!plain) throw new Error('갑지 PDF 암호를 풀지 못했습니다');
+        gbuf = await plain.arrayBuffer();
+      }
+      var claim = await RSStore.download(pdfId);
+      var L = await RSPdf.lib('pdflib'), out = await L.PDFDocument.create();
+      var add = async function (buf) { var d = await L.PDFDocument.load(buf); (await out.copyPages(d, d.getPageIndices())).forEach(function (p) { out.addPage(p); }); };
+      await add(gbuf);
+      await add(await claim.arrayBuffer());
+      var blob = new Blob([await out.save()], { type: 'application/pdf' });
+      var r;
+      if (existing && existing.id) { r = await RSStore.replacePdf(existing.id, blob); r = { id: existing.id, name: (r && r.name) || existing.name }; }
+      else {
+        var info = await RSStore.fileInfo(pdfId);
+        var base = (info.name || '출장_영수증.pdf');
+        var name = /_영수증_/.test(base) ? base.replace('_영수증_', '_갑지+영수증_') : base.replace(/\.pdf$/i, '') + '_갑지.pdf';
+        var folder = info.parents && info.parents[0];
+        name = await RSStore.freeName(folder, name);
+        r = await RSStore.uploadMerged(folder, name, blob, pdfId);
+      }
+      toast('"' + r.name + '"을 만들었습니다' + (blob.size > RSPdf.LIMIT ? ' · 10MB 넘음(' + (blob.size / 1048576).toFixed(1) + 'MB)' : ''));
+      return r;
+    } catch (e) {
+      toast(e.message || '갑지를 붙이지 못했습니다');
       throw e;
     }
   }

@@ -390,6 +390,18 @@
       method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + m.boundary }, body: m.body });
   }
 
+  // 출장비: 결재 끝난 지출결의서(갑지)를 앞에 붙인 합본 PDF. 청구 PDF와는 별개 파일(rsGapjiOf = 청구 PDF ID)
+  async function uploadMerged(folderId, name, blob, ofId) {
+    var m = multipart({ name: name, mimeType: 'application/pdf', parents: [folderId], appProperties: { rsRole: 'gapjiPdf', rsGapjiOf: ofId } }, blob, 'application/pdf');
+    return api(UPLOAD + '?uploadType=multipart&keepRevisionForever=true&fields=id,name', {
+      method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + m.boundary }, body: m.body });
+  }
+  async function findMerged(ofId) {
+    var q = "appProperties has { key='rsGapjiOf' and value='" + ofId + "' } and trashed=false";
+    var d = await api(DRIVE + '?q=' + encodeURIComponent(q) + '&fields=files(id,name)&orderBy=createdTime desc&pageSize=1&spaces=drive');
+    return d.files && d.files[0] ? d.files[0] : null;
+  }
+
   // [다시 만들기]: 같은 파일(같은 ID·이름)의 내용만 새 PDF로 바꿈
   async function replacePdf(fileId, blob) {
     return api(UPLOAD + '/' + fileId + '?uploadType=media&keepRevisionForever=true&fields=id,name', {
@@ -397,7 +409,7 @@
   }
 
   async function fileInfo(fileId) {
-    return api(DRIVE + '/' + fileId + '?fields=id,name,size,webViewLink,trashed');
+    return api(DRIVE + '/' + fileId + '?fields=id,name,size,webViewLink,trashed,parents');
   }
 
   // 여러 영수증의 상태·청구 PDF ID·청구일시를 한 번에 바꿈. list = [{id, status, pdfId, claimedAt, expect:[허용 상태]}]
@@ -527,6 +539,8 @@
     findRow: findRow,
     readSettings: readSettings,
     uploadPdfFile: uploadPdfFile,
+    uploadMerged: uploadMerged,
+    findMerged: findMerged,
     appendAttachment: appendAttachment,
     deleteReceipts: deleteReceipts,
     writeSettings: writeSettings,

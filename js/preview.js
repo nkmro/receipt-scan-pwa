@@ -126,11 +126,10 @@
       (P.error ? '<div class="banner warn" role="alert">' + esc(P.error) + ' <button class="mini" id="pvRetry" type="button">다시 시도</button></div>' : '');
 
     var atts = mode === 'sheet' ? [] : items.filter(isAtt);       // 손입력 영수증의 PDF(영수증 쪽 뒤에 붙음)
-    var front = sel.category === '출장비' ? P.front : null;         // 출장비: 인트라넷에서 받은 갑지 PDF(맨 앞)
     var sheets = withSheet && !mixed ? sheetUrls(sel.category, items, info) : [];
     var nRec = mode === 'sheet' ? 0 : (P.pages ? P.pages.length : 0);
     var nPages = sheets.length + nRec;
-    var extra = (front ? 1 : 0) + atts.length;
+    var extra = atts.length;
     h = h.replace('<!--np-->', nPages || extra ? ' · <b>' + (nPages ? nPages + '쪽' : '') + (extra ? (nPages ? ' + ' : '') + 'PDF ' + extra + '개' : '') + '</b>' : '');
     var attCard = function (label, name, sub, href, del) {
       return '<div class="pv-pl">' + label + '</div><div class="pv-att">' +
@@ -138,11 +137,6 @@
         '<b>' + esc(name) + '</b>' + (sub ? esc(sub) : '') + '<span>올린 PDF의 모든 쪽이 이 자리에 그대로 들어갑니다</span>' +
         (href ? '<a class="mini" href="' + href + '" target="_blank" rel="noopener">PDF 열기</a>' : '') + (del || '') + '</div>';
     };
-    if (sel.category === '출장비' && !P.savedPdf) {
-      h += front ? attCard('인트라넷 출장비 갑지 (맨 앞)', front.name, (front.size / 1048576).toFixed(1) + 'MB', '', '<button class="mini" id="pvFrontDel" type="button">빼기</button>')
-        : '<div class="pv-front"><label class="at-file"><input type="file" id="pvFront" accept="application/pdf,.pdf" hidden><span>+ 인트라넷 출장비 갑지 PDF 붙이기 (선택)</span></label>' +
-          '<span class="hint" style="padding:6px 0 0">인트라넷에서 받은 출장비 갑지(지출결의서)를 붙이면 영수증 앞에 합쳐서 1개의 PDF로 만듭니다.</span></div>';
-    }
     h += sheets.map(function (u, i) {
       return '<div class="pv-pl">갑지 ' + (i + 1) + (sheets.length > 1 ? ' / ' + sheets.length : '') + '</div><div class="pv-page pv-sheet"><img src="' + u + '" alt="갑지 ' + (i + 1) + '쪽"></div>';
     }).join('');
@@ -178,15 +172,6 @@
     });
     root.querySelectorAll('[data-use]').forEach(function (b) { b.onclick = function () { ctx.narrow(uses[b.dataset.use]); }; });
     root.querySelectorAll('[data-fix]').forEach(function (b) { b.onclick = function () { ctx.openDetail(b.dataset.fix); }; });
-    var fi = root.querySelector('#pvFront');
-    if (fi) fi.onchange = function () {
-      var f = fi.files && fi.files[0]; if (!f) return;
-      if (!/pdf$/i.test(f.type) && !/\.pdf$/i.test(f.name)) { ctx.toast('PDF 파일만 붙일 수 있습니다'); return; }
-      if (f.size > RSPdf.LIMIT) { ctx.toast('10MB가 넘는 파일은 붙일 수 없습니다'); return; }
-      P.front = f; redraw();
-    };
-    var fd = root.querySelector('#pvFrontDel');
-    if (fd) fd.onclick = function () { P.front = null; redraw(); };
     var me = root.querySelector('#pvMe');
     if (me) me.onclick = function () { ctx.gotoMe(); };
     var rt = root.querySelector('#pvRetry');
@@ -214,8 +199,7 @@
         if (mode !== 'sheet') p.pages.forEach(function (pg) { all.push(pg); });
         // 첨부 PDF 받아 두기(크기만큼 사진 PDF 한도를 줄임)
         var atts = mode === 'sheet' ? [] : p.items.filter(isAtt);
-        var attBufs = [], attSize = 0, front = null;
-        if (sel.category === '출장비' && p.front) { front = await p.front.arrayBuffer(); attSize += front.byteLength; }
+        var attBufs = [], attSize = 0;
         for (var ai = 0; ai < atts.length; ai++) {
           p.busy = '첨부 PDF 받는 중 ' + (ai + 1) + ' / ' + atts.length; setBusy(p.busy);
           var ab = await (await ctx.photoBlob(atts[ai])).arrayBuffer();
@@ -223,9 +207,9 @@
         }
         var built = all.length ? await RSPdf.build(all, byId, function (it) { return it.canvas ? Promise.resolve(it.canvas) : ctx.photoBlob(it).then(decode); },
           function (msg) { p.busy = msg; setBusy(msg); }, Math.max(1024 * 1024, RSPdf.LIMIT - attSize)) : { blob: null, reduced: false };
-        if (attBufs.length || front) {
+        if (attBufs.length) {
           p.busy = 'PDF 합치는 중…'; setBusy(p.busy);
-          built.blob = await mergePdf(front, built.blob, attBufs);
+          built.blob = await mergePdf(null, built.blob, attBufs);
           built.tooBig = built.blob.size > RSPdf.LIMIT;
         }
         p.size = built.blob.size; p.reduced = built.reduced; p.tooBig = !!built.tooBig;
