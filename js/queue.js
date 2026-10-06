@@ -98,7 +98,7 @@
               if (!(await RSStore.hasReceiptRow(ws, it.id))) {
                 await RSStore.appendReceipt(ws, Object.assign({ id: it.id, fileId: it.fileId, updatedAt: localIso(new Date()) }, it.meta));
               }
-              it.stage = 'done'; it.error = ''; it.blob = null; // 폰에는 썸네일만 남김
+              it.stage = 'done'; it.error = ''; // 사진은 AI 판독이 끝날 때까지 폰에 둠(release에서 지움)
               it.doneAt = new Date().toISOString();
               await put(it); changed++; emit();
             }
@@ -119,7 +119,24 @@
     return changed;
   }
 
+  // AI 판독이 끝난(또는 7일 지난) 영수증의 사진을 폰에서 지움(썸네일만 남김)
+  async function release(id) {
+    var it = await tx('readonly', function (s) { return req(s.get(id)); });
+    if (it && it.blob && it.stage === 'done') { it.blob = null; await put(it); }
+  }
+  async function cleanup(email) {
+    var old = Date.now() - 7 * 86400000, list = await all(email);
+    for (var i = 0; i < list.length; i++) {
+      var it = list[i];
+      if (it.stage === 'done' && it.blob && Date.parse(it.doneAt || it.createdAt) < old) { it.blob = null; await put(it); }
+    }
+  }
+
   window.RSQueue = {
+    release: release,
+    get: function (id) { return tx('readonly', function (s) { return req(s.get(id)); }); },
+    cleanup: cleanup,
+    localIso: localIso,
     add: add,
     all: all,
     pending: pending,

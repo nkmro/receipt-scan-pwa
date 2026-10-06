@@ -171,7 +171,20 @@
     return relay(path, body, { method: body === undefined ? 'GET' : 'POST', idToken: info.idToken });
   }
 
+  // 승인된 사용자용 서버 호출(id token으로 본인 확인). 토큰이 만료됐으면 한 번 새로 받아 다시 보냄
+  async function authed(path, body) {
+    await getToken();
+    if (!info.idToken) { access = null; await getToken(); }
+    try { return await relay(path, body, { idToken: info.idToken }); }
+    catch (e) {
+      if (e.status !== 401) throw e;
+      access = null; await getToken();
+      return relay(path, body, { idToken: info.idToken });
+    }
+  }
+
   window.RSAuth = {
+    authed: authed,
     ready: waitForGis,
     login: login,
     logout: logout,

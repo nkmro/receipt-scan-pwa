@@ -6,7 +6,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '0.18.1';
+  var APP_VERSION = '0.19.0';
   var CATEGORIES = ['경비', '접대비', '회의비', '출장비'];
   var CACHE_KEY = 'rs.cache.receipts';
   var SET_KEY = 'rs.cache.settings';
@@ -240,6 +240,7 @@
     if (state.step) banner = '<div class="banner">' + esc(state.step) + '</div>';
     else if (state.error) banner = '<div class="banner warn" role="alert">' + esc(state.error) + '</div>';
     else if (state.offline) banner = '<div class="banner">오프라인입니다. 마지막으로 불러온 합계를 보여 줍니다.</div>';
+    if (state.ocrStep) banner += '<div class="banner">AI가 영수증을 읽는 중 ' + esc(state.ocrStep) + ' · 앱을 닫지 말아 주세요</div>';
     if (state.uploadWaiting) {
       banner += RSQueue.busy()
         ? '<div class="banner up">Drive에 올리는 중 ' + state.uploadWaiting + '건 · 앱을 닫지 말아 주세요</div>'
@@ -493,6 +494,8 @@
       state.offline = false;
       saveCache(state.receipts);
       kickQueue();
+      kickOcr();
+      RSQueue.cleanup(state.user.email).catch(function () {});
     } catch (e) {
       state.step = ''; state.authChecked = true;
       if (e.notApproved) {
@@ -595,6 +598,32 @@
     }).catch(function () {});
   }
   RSQueue.onChange(updateWaiting);
+
+  // AI 판독: 판독대기 영수증을 하나씩 판독(앱이 열려 있을 때만). 설정·상한·인터넷 문제로 멈추면 5분 뒤에 다시 시도
+  var ocrPausedUntil = 0;
+  function kickOcr() {
+    if (!window.RSOcr || RSOcr.busy() || !state.user || !state.ws || !navigator.onLine || Date.now() < ocrPausedUntil) return;
+    var list = state.receipts.filter(function (r) {
+      return r.status === '판독대기' && r.kind !== '첨부' && r.fileId && (r.tries || 0) < RSOcr.MAX_TRIES;
+    });
+    if (!list.length) return;
+    state.ocrStep = '0/' + list.length; render();
+    RSOcr.run(state.ws, list, {
+      blobOf: function (it) { return RSQueue.get(it.id).then(function (q) { return q && q.blob ? q.blob : null; }).catch(function () { return null; }); },
+      cards: function () { return RSAuth.corpCards(); },
+      onStep: function (n, total) { state.ocrStep = n + '/' + total; if (currentTab() === 'home') render(); },
+      onDone: function (id) { RSQueue.release(id).catch(function () {}); }
+    }).then(function (out) {
+      state.ocrStep = '';
+      if (!out) return;
+      if (out.stop) { ocrPausedUntil = Date.now() + 5 * 60000; toast(out.stop); }
+      var msg = [];
+      if (out.done) msg.push(out.done + '건 판독 완료');
+      if (out.need) msg.push(out.need + '건 확인 필요');
+      if (msg.length) toast('AI 판독: ' + msg.join(' · '));
+      if (out.done || out.need || out.failed) refresh(); else render();
+    }).catch(function (e) { state.ocrStep = ''; console.warn('ocr', e); render(); });
+  }
 
   function kickQueue() {
     if (!state.user || !state.ws || !navigator.onLine) { updateWaiting(); return; }

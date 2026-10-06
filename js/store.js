@@ -19,7 +19,7 @@
   var LAST_COL = 'AK';
   // 열 번호(0부터). 상세 화면 저장에서 씀
   var F = { category: 3, status: 4, card: 5, cardType: 6, txAt: 7, month: 8, amount: 9, merchant: 10, address: 11, desc: 12, memo: 13,
-    widthMm: 14, reason: 16, pdfId: 19, claimedAt: 20, updatedAt: 21, rot: 22, tripDate: 23, guest: 24, topic: 25, account: 26,
+    widthMm: 14, conf: 15, reason: 16, tries: 17, pdfId: 19, claimedAt: 20, updatedAt: 21, rot: 22, tripDate: 23, guest: 24, topic: 25, account: 26,
     fuel: 27, work: 28, car: 29, from: 30, to: 31, km: 32, attendees: 33, transport: 34, driveTime: 35, corpCard: 36 };
   var DATE_FIELDS = { txAt: 1, tripDate: 1 }; // 시트에서 날짜로 보이게(PC에서 정렬·필터 가능) 입력
   var BUDGET_HEADERS = ['ID', '적용 월', '구분', '유형', '이월 방식', '금액', '메모', '앱 수정일시'];
@@ -206,6 +206,7 @@
         memo: String(r[13] || ''),
         widthMm: w > 0 ? w : 80,
         reason: String(r[16] || ''),
+        tries: Number(r[17]) || 0,                    // AI 판독 시도 횟수
         fileId: String(r[18] || ''),
         pdfId: String(r[19] || ''),
         claimedAt: serialToIso(r[20]),
