@@ -110,6 +110,7 @@
           var blob = (await ctx.blobOf(it)) || await RSStore.download(it.fileId);
           var b64 = await toBase64(blob);
           res = (await RSAuth.authed('/v1/ocr', { image: b64 })).result;
+          if (!res || typeof res !== 'object') throw new Error('AI 응답이 비어 있습니다');
         } catch (e) {
           // 설정·상한·로그인·인터넷 문제는 뒤의 것도 같으므로 멈춤(시도 횟수는 올리지 않음)
           if (e.code === 'NO_KEY' || e.status === 404) { out.stop = 'AI 판독이 아직 준비되지 않았습니다. 직접 입력해도 됩니다'; break; }

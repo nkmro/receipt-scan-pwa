@@ -176,6 +176,7 @@
         '<button type="button" class="bx-act" id="bxAttach">' + ICON.clip + '파일 첨부</button>' +
       '</div>' +
       '<div class="bx-cats" role="tablist" aria-label="구분">' + catChips + '</div>' +
+      '<section class="bx-sec"><div class="bx-sec-h">' + esc(B.cat) + ' 영수증</div>' +
       '<div class="bx-month">' +
         '<div class="seg2"><button type="button" data-m="month"' + (B.all ? '' : ' class="on"') + '>' + (Number(month.slice(0, 4)) !== new Date().getFullYear() ? month.slice(2, 4) + '년 ' : '') + mNum + '월 ▾</button>' +
         '<button type="button" data-m="all"' + (B.all ? ' class="on"' : '') + '>전체</button></div>' +
@@ -183,7 +184,7 @@
       '</div>' +
       '<div class="bx-tabs" role="tablist">' +
         tabBtn('keep', '보관중 ' + keepCount) + tabBtn('done', '청구완료') + tabBtn('excl', '제외') +
-      '</div>' +
+      '</div></section>' +
       (B.remake && B.tab === 'keep' ? '<div class="banner bx-remake"><b>다시 만들기</b> · ' + esc(B.remake.name || 'PDF') +
         '<br>넣을 영수증은 체크하고 뺄 영수증은 체크를 푼 뒤 [A4 미리보기·PDF]를 눌러 주세요. <button class="mini" id="bxRemakeCancel" type="button">취소</button></div>' : '') +
       (ctx.error ? '<div class="banner warn" role="alert">' + esc(ctx.error) + '</div>' : '') +

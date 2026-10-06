@@ -6,7 +6,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '0.19.1';
+  var APP_VERSION = '0.19.2';
   var CATEGORIES = ['경비', '접대비', '회의비', '출장비'];
   var CACHE_KEY = 'rs.cache.receipts';
   var SET_KEY = 'rs.cache.settings';
@@ -228,13 +228,14 @@
     if (!state.user) return renderLogin(root);
     if (state.pending) return renderPending(root);
     var month = ym(view);
-    var total = 0, byCat = {}, pending = 0;
+    var total = 0, byCat = {}, pending = 0, need = 0;
     CATEGORIES.forEach(function (c) { byCat[c] = 0; });
     state.receipts.forEach(function (r) {
       if (r.month !== month || r.status === '제외') return;
       if (byCat[r.category] !== undefined) byCat[r.category] += r.amount;
       total += r.amount;
       if (r.status === '판독대기') pending++;
+      if (r.status === '확인필요') need++;   // 합계에는 포함(금액이 있는 것만), 건수만 따로 알림
     });
 
     function catCard(c) {
@@ -287,7 +288,9 @@
         }).join('') + '</div>' : '') +
       '</section>' +
       '<div class="section-head"><h2>구분별 사용</h2>' +
-        (pending ? '<div class="chip">' + ICON.clock + '판독 대기 ' + pending + '건</div>' : '') +
+        ((pending || need) ? '<div class="chips">' +
+          (pending ? '<div class="chip">' + ICON.clock + '판독 대기 ' + pending + '건</div>' : '') +
+          (need ? '<a class="chip warn" href="#/box">확인 필요 ' + need + '건</a>' : '') + '</div>' : '') +
       '</div>' +
       cards +
       '<div class="cta-wrap"><button class="cta" id="capture">' + ICON.camera + '영수증 촬영</button></div>' +
@@ -517,6 +520,7 @@
       kickQueue();
       kickOcr();
       RSQueue.cleanup(state.user.email).catch(function () {});
+      runBackup();
     } catch (e) {
       state.step = ''; state.authChecked = true;
       if (e.notApproved) {
@@ -619,6 +623,20 @@
     }).catch(function () {});
   }
   RSQueue.onChange(updateWaiting);
+
+  // 백업: 하루 한 번(이 기기에서 그날 처음 연 때) 장부 시트를 Drive '백업' 폴더에 복사. 관리자는 서버 자료도 저장. 실패해도 앱 사용에는 영향 없음
+  function runBackup() {
+    var d = new Date(), p2 = function (n) { return String(n).padStart(2, '0'); };
+    var day = d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
+    var key = 'rs.backup.' + state.user.email;
+    try { if (localStorage.getItem(key) === day) return; } catch (e) { /* 무시 */ }
+    var ws = state.ws;
+    (async function () {
+      await RSStore.backupLedger(ws, day);
+      if (RSAuth.isAdmin()) await RSStore.backupServer(ws, day, await RSAuth.admin('/v1/admin/backup'));
+      try { localStorage.setItem(key, day); } catch (e) { /* 무시 */ }
+    })().catch(function (e) { console.warn('백업 실패(다음에 앱을 열 때 다시 시도)', e, e && e.detail); });
+  }
 
   // AI 판독: 판독대기 영수증을 하나씩 판독(앱이 열려 있을 때만). 설정·상한·인터넷 문제로 멈추면 5분 뒤에 다시 시도
   var ocrPausedUntil = 0;

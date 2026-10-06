@@ -604,7 +604,47 @@
       method: 'PUT', json: { values: [[key, e.type, e.card || '', e.corpCard || '', nowIso]] } });
   }
 
+  // ── 백업: Drive '영수증 스캔/백업' 폴더에 하루 한 번(앱을 처음 열 때), 최근 15개만 보관 ──
+  var BACKUP_KEEP = 15;
+  async function backupFolder(ws) {
+    if (ws.backupId && await exists(ws.backupId)) return ws.backupId;
+    ws.backupId = await findOrCreate('백업', FOLDER, 'backup', ws.rootId);
+    return ws.backupId;
+  }
+  async function hasBackup(role, day) {
+    var q = "appProperties has { key='rsRole' and value='" + role + "' } and appProperties has { key='rsDay' and value='" + day + "' } and trashed=false";
+    var d = await api(DRIVE + '?q=' + encodeURIComponent(q) + '&fields=files(id)&pageSize=1&spaces=drive');
+    return !!(d.files && d.files.length);
+  }
+  async function pruneBackups(role) {
+    var q = "appProperties has { key='rsRole' and value='" + role + "' } and trashed=false";
+    var d = await api(DRIVE + '?q=' + encodeURIComponent(q) + '&fields=files(id)&orderBy=createdTime desc&pageSize=100&spaces=drive');
+    var old = (d.files || []).slice(BACKUP_KEEP);
+    for (var i = 0; i < old.length; i++) await api(DRIVE + '/' + old[i].id + '?fields=id', { method: 'PATCH', json: { trashed: true } }).catch(function () {});
+  }
+  // 영수증 장부 시트 통째로 복사(영수증·예산·설정·카드·메타 탭 모두). 오늘 것이 있으면 건너뜀
+  async function backupLedger(ws, day) {
+    if (await hasBackup('ledgerBackup', day)) return false;
+    var folder = await backupFolder(ws);
+    await api(DRIVE + '/' + ws.sheetId + '/copy?fields=id', { method: 'POST', json: {
+      name: '영수증 장부_백업_' + day, parents: [folder], appProperties: { rsRole: 'ledgerBackup', rsDay: day } } });
+    await pruneBackups('ledgerBackup');
+    return true;
+  }
+  // 서버 자료(사용자 승인 목록·법인카드 목록) JSON 저장(관리자만)
+  async function backupServer(ws, day, data) {
+    if (await hasBackup('serverBackup', day)) return false;
+    var folder = await backupFolder(ws);
+    var m = multipart({ name: '서버자료_백업_' + day + '.json', mimeType: 'application/json', parents: [folder],
+      appProperties: { rsRole: 'serverBackup', rsDay: day } }, new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), 'application/json');
+    await api(UPLOAD + '?uploadType=multipart&fields=id', { method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + m.boundary }, body: m.body });
+    await pruneBackups('serverBackup');
+    return true;
+  }
+
   window.RSStore = {
+    backupLedger: backupLedger,
+    backupServer: backupServer,
     readCards: readCards,
     writeCard: writeCard,
     cardKey: cardKey,
