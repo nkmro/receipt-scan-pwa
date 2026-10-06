@@ -520,6 +520,38 @@
     if (data.length) await api(SHEETS + '/' + ws.sheetId + '/values:batchUpdate', { method: 'POST', json: { valueInputOption: 'RAW', data: data } });
   }
 
+  // ── 예산(시트 '예산' 탭). 유형: 기본(적용 월부터 계속) · 이월(그 달만) · 추가(그 달만, 메모=기안 내용) ──
+  async function ensureBudgetTab(ws) {
+    var info = await api(SHEETS + '/' + ws.sheetId + '?fields=sheets.properties.title');
+    if (info.sheets.some(function (s) { return s.properties.title === '예산'; })) return;
+    await api(SHEETS + '/' + ws.sheetId + ':batchUpdate', { method: 'POST', json: { requests: [{ addSheet: { properties: { title: '예산', gridProperties: { frozenRowCount: 1 } } } }] } });
+    await api(SHEETS + '/' + ws.sheetId + '/values:batchUpdate', { method: 'POST', json: { valueInputOption: 'RAW', data: [{ range: '예산!A1:H1', values: [BUDGET_HEADERS] }] } });
+  }
+  function budgetMonth(v) {
+    if (typeof v === 'number') return serialToIso(v, true);
+    var m = String(v || '').trim().match(/^(\d{4})[-.\/년\s]*(\d{1,2})/);
+    return m ? m[1] + '-' + m[2].padStart(2, '0') : '';
+  }
+  async function readBudgets(ws) {
+    var d;
+    try { d = await api(SHEETS + '/' + ws.sheetId + '/values/' + encodeURIComponent('예산!A2:H1000') + '?valueRenderOption=UNFORMATTED_VALUE'); }
+    catch (e) { if (e.status !== 400) throw e; await ensureBudgetTab(ws); return []; }
+    return (d.values || []).map(function (r) {
+      var a = r[5];
+      if (typeof a === 'string') a = Number(a.replace(/[^\d.-]/g, ''));
+      return { id: String(r[0] || ''), month: budgetMonth(r[1]), category: String(r[2] || '').trim(), type: String(r[3] || '').trim(),
+        amount: isFinite(a) ? Number(a) : 0, memo: String(r[6] || ''), updatedAt: String(r[7] || '') };
+    }).filter(function (b) { return b.month && b.category && b.type; });
+  }
+  // 예산 탭 전체를 목록으로 다시 씀(내 장부라 동시에 고치는 사람이 없음)
+  async function saveBudgets(ws, list) {
+    await ensureBudgetTab(ws);
+    var nowIso = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    var rows = list.map(function (b) { return [b.id, b.month, b.category, b.type, '', b.amount, b.memo || '', b.updatedAt || nowIso]; });
+    await api(SHEETS + '/' + ws.sheetId + '/values/' + encodeURIComponent('예산!A2:H1000') + ':clear', { method: 'POST', json: {} });
+    if (rows.length) await api(SHEETS + '/' + ws.sheetId + '/values/' + encodeURIComponent('예산!A2:H' + (rows.length + 1)) + '?valueInputOption=RAW', { method: 'PUT', json: { values: rows } });
+  }
+
   window.RSStore = {
     monthFolder: monthFolder,
     findUpload: findUpload,
@@ -544,6 +576,8 @@
     appendAttachment: appendAttachment,
     deleteReceipts: deleteReceipts,
     writeSettings: writeSettings,
+    readBudgets: readBudgets,
+    saveBudgets: saveBudgets,
     SETTING_KEYS: SETTING_KEYS,
     writeCells: writeCells,
     parseRow: function (r) { return rowToObj(r, 0); },

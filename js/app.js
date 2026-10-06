@@ -2,14 +2,16 @@
    - 하단 메뉴 3개(홈·보관함·예산), 해시 주소(#/home 등)로 화면 전환
    - 로그인하면 Drive에 "영수증 스캔" 폴더와 "영수증 장부" 시트를 자동으로 만들고,
      홈 합계는 시트의 영수증 탭(귀속 월, 금액, 구분)을 읽어 계산
-   - 예산 칸은 아직 비움(예산 단계에서 채움) */
+   - 예산: 접대비·회의비만(시트 '예산' 탭). 경비·출장비는 금액만 */
 (function () {
   'use strict';
 
-  var APP_VERSION = '0.17.0';
+  var APP_VERSION = '0.18.0';
   var CATEGORIES = ['경비', '접대비', '회의비', '출장비'];
   var CACHE_KEY = 'rs.cache.receipts';
   var SET_KEY = 'rs.cache.settings';
+  var BUD_KEY = 'rs.cache.budgets';
+  var BUDGET_CATS = ['접대비', '회의비'];   // 예산이 있는 구분(경비·출장비는 예산 없음)
 
   // ── 상태 ──
   var state = {
@@ -22,6 +24,7 @@
     ws: null,              // 폴더·시트 ID
     receipts: loadCache(), // 시트에서 읽은 영수증 목록
     settings: loadSettingsCache(), // 내 정보(시트 '설정' 탭)
+    budgets: loadJson(BUD_KEY, []), // 예산(시트 '예산' 탭)
     loading: false,
     step: '',              // 준비 중 안내 문구
     error: '',
@@ -30,6 +33,11 @@
 
   function loadCache() {
     try { return JSON.parse(localStorage.getItem(CACHE_KEY) || '[]'); } catch (e) { return []; }
+  }
+  function loadJson(k, d) { try { return JSON.parse(localStorage.getItem(k) || 'null') || d; } catch (e) { return d; } }
+  function setBudgets(list) {
+    state.budgets = list || [];
+    try { localStorage.setItem(BUD_KEY, JSON.stringify(state.budgets)); } catch (e) { /* 무시 */ }
   }
   function loadSettingsCache() {
     try { return JSON.parse(localStorage.getItem(SET_KEY) || '{}') || {}; } catch (e) { return {}; }
@@ -190,7 +198,7 @@
     state.selection = null;
     state.user = null; state.ws = null; state.receipts = []; state.error = ''; state.pending = null;
     state.admin = { list: null, loading: false, error: '', waiting: 0 };
-    saveCache([]); setSettings({});
+    saveCache([]); setSettings({}); setBudgets([]);
     location.hash = '#/home';
     render();
   }
@@ -209,14 +217,24 @@
       if (r.status === '판독대기') pending++;
     });
 
-    var cards = CATEGORIES.map(function (c) {
-      return '<a class="cat" href="#/box?cat=' + encodeURIComponent(c) + '" data-cat="' + c + '">' +
+    function catCard(c) {
+      var body = '';
+      if (BUDGET_CATS.indexOf(c) >= 0) {
+        var b = budgetOf(c, month), left = b.total - byCat[c];
+        var pct = b.total > 0 ? Math.min(100, Math.round(byCat[c] / b.total * 100)) : (byCat[c] > 0 && b.has ? 100 : 0);
+        var over = b.has && left < 0;
+        body = '<div class="bar' + (over ? ' over' : '') + '"><i style="width:' + pct + '%"></i></div>' +
+          (b.has ? '<div class="budget">예산 <b>' + won(b.total) + '</b><br>잔액 <b' + (over ? ' class="neg">' + won(left) + ' (초과)' : '>' + won(left)) + '</b></div>'
+                 : '<div class="budget">예산 —<br>잔액 —</div>');
+      }
+      return '<a class="cat' + (body ? '' : ' small') + '" href="#/box?cat=' + encodeURIComponent(c) + '" data-cat="' + c + '">' +
         '<div class="name">' + c + '</div>' +
-        '<div class="sum">' + won(byCat[c]) + '<small>원</small></div>' +
-        '<div class="bar"></div>' +
-        '<div class="budget">예산 —<br>잔액 —</div>' +
+        '<div class="sum">' + won(byCat[c]) + '<small>원</small></div>' + body +
       '</a>';
-    }).join('');
+    }
+    var cards = '<div class="grid">' + catCard('경비') + catCard('출장비') + '</div>' +
+      '<div class="grid grid2">' + catCard('접대비') + catCard('회의비') + '</div>';
+    var pays = payBreakdown(month);
 
     var banner = '';
     if (state.step) banner = '<div class="banner">' + esc(state.step) + '</div>';
@@ -243,13 +261,14 @@
       '<section class="total" aria-label="이번 달 사용 합계">' +
         '<div class="label">' + (isCurrent(view) ? '이번 달' : view.m + '월') + ' 사용 합계' + (state.loading ? ' · 불러오는 중' : '') + '</div>' +
         '<div class="amount"><b>' + won(total) + '</b><span>원</span></div>' +
-        '<div class="track"><i style="width:0%"></i></div>' +
-        '<div class="meta"><div>예산 —</div><div>잔액 —</div></div>' +
+        (pays.length ? '<div class="paylist">' + pays.map(function (p) {
+          return '<div class="' + (p.sub ? 'sub' : '') + '"><span>' + (p.sub ? '└ ' : '') + esc(p.name) + '</span><b>' + won(p.amount) + '원</b></div>';
+        }).join('') + '</div>' : '') +
       '</section>' +
       '<div class="section-head"><h2>구분별 사용</h2>' +
         (pending ? '<div class="chip">' + ICON.clock + '판독 대기 ' + pending + '건</div>' : '') +
       '</div>' +
-      '<div class="grid">' + cards + '</div>' +
+      cards +
       '<div class="cta-wrap"><button class="cta" id="capture">' + ICON.camera + '영수증 촬영</button></div>' +
       '<div class="version">v' + APP_VERSION + '</div>'
     ));
@@ -262,6 +281,172 @@
     var ub = root.querySelector('#upBtn');
     if (ub) ub.onclick = function () { if (state.ws) kickQueue(); else refresh(); };
     root.querySelector('#avatar').onclick = openAccountSheet;
+  }
+
+  // 이번 달 결제 수단별 합계: 개인카드는 카드사별, 법인카드는 합계 + 카드별, 현금. 쓴 것만(0원은 안 보임)
+  function payBreakdown(month) {
+    var personal = {}, pOrder = [], corp = 0, corpBy = {}, cOrder = [], cash = 0;
+    state.receipts.forEach(function (r) {
+      if (r.month !== month || r.status === '제외' || !(r.amount > 0)) return;
+      if (r.cardType === '법인카드') {
+        corp += r.amount;
+        var k = r.corpCard || '카드 미선택';
+        if (!(k in corpBy)) { corpBy[k] = 0; cOrder.push(k); }
+        corpBy[k] += r.amount;
+      } else if (r.cardType === '현금' || String(r.card).trim() === '현금') {
+        cash += r.amount;
+      } else {
+        var n = String(r.card || '').trim() || '카드사 미입력';
+        if (!(n in personal)) { personal[n] = 0; pOrder.push(n); }
+        personal[n] += r.amount;
+      }
+    });
+    var out = [];
+    pOrder.sort(function (a, b) { return personal[b] - personal[a]; }).forEach(function (n) { out.push({ name: n, amount: personal[n] }); });
+    if (corp > 0) {
+      out.push({ name: '법인카드', amount: corp });
+      cOrder.sort(function (a, b) { return corpBy[b] - corpBy[a]; }).forEach(function (n) { out.push({ name: n, amount: corpBy[n], sub: true }); });
+    }
+    if (cash > 0) out.push({ name: '현금', amount: cash });
+    return out;
+  }
+
+  // ── 예산 계산 ──
+  function spentOf(cat, month) {
+    return state.receipts.reduce(function (a, r) { return a + (r.month === month && r.status !== '제외' && r.category === cat ? r.amount : 0); }, 0);
+  }
+  // 기본 = 그 달 이전(포함)에 정한 것 중 가장 최근. 이월·추가 = 그 달 것만
+  function budgetOf(cat, month) {
+    var base = null, carry = null, adds = [];
+    state.budgets.forEach(function (b) {
+      if (b.category !== cat) return;
+      if (b.type === '기본' && b.month <= month && (!base || b.month >= base.month)) base = b;
+      else if (b.type === '이월' && b.month === month) carry = b;
+      else if (b.type === '추가' && b.month === month) adds.push(b);
+    });
+    var total = (base ? base.amount : 0) + (carry ? carry.amount : 0) + adds.reduce(function (a, b) { return a + b.amount; }, 0);
+    return { base: base, carry: carry, adds: adds, total: total, has: !!(base || carry || adds.length) };
+  }
+  function digits(v) { var d = String(v || '').replace(/[^\d]/g, ''); return d === '' ? null : Number(d); }
+  function newBudgetId() { return 'B' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+  // ── 화면: 예산 ──
+  function renderBudget(root) {
+    if (!state.user) return renderLogin(root);
+    if (state.pending) return renderPending(root);
+    var month = ym(view), pv = shift(view, -1), pmonth = ym(pv);
+    var dis = '';
+    function inp(attrs, val) {
+      return '<input class="bg-in" type="text" inputmode="numeric" autocomplete="off" ' + attrs + ' value="' + (val == null ? '' : won(val)) + '" placeholder="0"' + dis + '>';
+    }
+    var cardsHtml = BUDGET_CATS.map(function (c) {
+      var b = budgetOf(c, month), used = spentOf(c, month), left = b.total - used;
+      var p = budgetOf(c, pmonth), pleft = p.total - spentOf(c, pmonth);
+      var baseNote = b.base && b.base.month !== month ? Number(b.base.month.slice(5)) + '월에 정한 금액 · 바꾸면 이 달부터' : '매달 자동 적용 · 바꾸면 이 달부터';
+      return '<div class="bg-card" data-cat="' + c + '"><h3>' + c + '<small>' + view.m + '월</small></h3>' +
+        '<div class="bg-row"><div class="l">기본 월 예산<small>' + baseNote + '</small></div>' + inp('data-b="base"', b.base ? b.base.amount : null) + '</div>' +
+        '<div class="bg-row"><div class="l">전월 이월<small>이 달만 · 직접 입력</small>' +
+          (p.has ? '<div class="bg-hint">참고: ' + pv.m + '월 잔액 ' + won(pleft) + '원</div>' : '') + '</div>' +
+          inp('data-b="carry"', b.carry ? b.carry.amount : null) + '</div>' +
+        b.adds.map(function (a) {
+          return '<div class="bg-row bg-addrow"><div class="l">추가 예산<input class="bg-memo" type="text" maxlength="40" data-b="memo" data-id="' + esc(a.id) + '" value="' + esc(a.memo) + '" placeholder="메모 (예: 9/28 추가 기안)"' + dis + '></div>' +
+            '<div class="bg-r">' + inp('data-b="add" data-id="' + esc(a.id) + '"', a.amount || null) +
+            '<button class="bg-x" type="button" data-del="' + esc(a.id) + '" aria-label="추가 예산 빼기"' + dis + '>×</button></div></div>';
+        }).join('') +
+        '<button class="bg-add" type="button" data-addcat="' + c + '"' + dis + '>+ 추가 예산 넣기 (기안)</button>' +
+        '<div class="bg-sum"><div>이 달 예산<b>' + won(b.total) + '</b></div><div>사용<b>' + won(used) + '</b></div>' +
+          '<div>잔액<b' + (left < 0 ? ' class="neg"' : '') + '>' + won(left) + '</b></div></div>' +
+      '</div>';
+    }).join('');
+    root.appendChild(el(
+      '<header class="topbar">' +
+        '<div class="month">' +
+          '<button class="icon-btn" id="prevMonth" aria-label="이전 달">' + ICON.prev + '</button>' +
+          '<h1>' + view.y + '년 ' + view.m + '월</h1>' +
+          '<button class="icon-btn" id="nextMonth" aria-label="다음 달"' + (isCurrent(view) ? ' disabled' : '') + '>' + ICON.next + '</button>' +
+        '</div>' +
+        '<button class="avatar" id="avatar" aria-label="계정 메뉴">' + esc((state.user.name || state.user.email).charAt(0).toUpperCase()) + '</button>' +
+      '</header>' +
+      '<h1 class="page-title bg-title">예산</h1>' +
+      '<div class="bg-note">접대비·회의비만 예산이 있어요. 경비·출장비는 예산 없이 사용 금액만 봅니다.<br>금액을 넣으면 바로 저장됩니다 (시트 \'예산\' 탭).</div>' +
+      cardsHtml
+    ));
+    root.querySelector('#prevMonth').onclick = function () { view = shift(view, -1); render(); };
+    root.querySelector('#nextMonth').onclick = function () { if (!isCurrent(view)) { view = shift(view, 1); render(); } };
+    root.querySelector('#avatar').onclick = openAccountSheet;
+    root.querySelectorAll('.bg-in').forEach(function (i) {
+      i.oninput = function () { var d = digits(i.value); i.value = d == null ? '' : won(d); };
+      i.onfocus = function () { try { i.select(); } catch (e) { /* 무시 */ } };
+      i.onchange = function () { onBudgetChange(i.closest('.bg-card').dataset.cat, month, i.dataset.b, i.dataset.id, digits(i.value)); };
+    });
+    root.querySelectorAll('.bg-memo').forEach(function (i) {
+      i.onchange = function () { onBudgetChange(i.closest('.bg-card').dataset.cat, month, 'memo', i.dataset.id, i.value.trim()); };
+    });
+    root.querySelectorAll('[data-del]').forEach(function (bt) {
+      bt.onclick = function () { onBudgetChange(bt.closest('.bg-card').dataset.cat, month, 'del', bt.dataset.del); };
+    });
+    root.querySelectorAll('[data-addcat]').forEach(function (bt) {
+      bt.onclick = function () {
+        var list = state.budgets.slice();
+        list.push({ id: newBudgetId(), month: month, category: bt.dataset.addcat, type: '추가', amount: 0, memo: '' });
+        saveBudgetList(list, true, function () {
+          var ins = document.querySelectorAll('.bg-card[data-cat="' + bt.dataset.addcat + '"] input[data-b="add"]');
+          if (ins.length) ins[ins.length - 1].focus();
+        });
+      };
+    });
+  }
+
+  function onBudgetChange(cat, month, what, id, val) {
+    var list = state.budgets.map(function (b) { return Object.assign({}, b); });
+    var now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    function upsert(type) {
+      var i = list.findIndex(function (b) { return b.category === cat && b.type === type && b.month === month; });
+      if (val == null || (type === '이월' && val === 0)) { if (i >= 0) list.splice(i, 1); }   // 비우면 그 달 값 지움(기본은 이전 달 금액으로 돌아감)
+      else if (i >= 0) { list[i].amount = val; list[i].updatedAt = now; }
+      else list.push({ id: newBudgetId(), month: month, category: cat, type: type, amount: val, memo: '', updatedAt: now });
+    }
+    if (what === 'base') upsert('기본');
+    else if (what === 'carry') upsert('이월');
+    else {
+      var j = list.findIndex(function (b) { return b.id === id; });
+      if (j < 0) return;
+      if (what === 'del') list.splice(j, 1);
+      else if (what === 'add') { list[j].amount = val || 0; list[j].updatedAt = now; }
+      else if (what === 'memo') { list[j].memo = val; list[j].updatedAt = now; }
+    }
+    saveBudgetList(list, what === 'del');
+  }
+
+  // 화면에 먼저 반영하고, 시트 저장은 순서대로 한 번씩(빠르게 여러 칸을 고쳐도 앞의 변경이 사라지지 않게)
+  // 금액·메모를 고칠 때는 화면을 다시 그리지 않고 합계만 바꿈(다른 칸을 누른 것이 끊기지 않게)
+  var budgetChain = Promise.resolve();
+  function saveBudgetList(list, full, after) {
+    if (!navigator.onLine) { toast('오프라인입니다. 온라인에서 다시 입력해 주세요'); render(); return; }
+    if (!state.ws) { toast('아직 시트를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요'); render(); return; }
+    setBudgets(list);
+    if (full) { render(); if (after) after(); } else updateBudgetSums();
+    budgetChain = budgetChain.then(async function () {
+      try {
+        await RSStore.saveBudgets(state.ws, state.budgets);
+        toast('저장했습니다');
+      } catch (e) {
+        console.warn(e, e.detail);
+        toast('저장하지 못했습니다. 시트 값으로 되돌립니다');
+        try { setBudgets(await RSStore.readBudgets(state.ws)); } catch (e2) { /* 무시 */ }
+        if (document.querySelector('.bg-card')) render();
+      }
+    });
+  }
+  function updateBudgetSums() {
+    var month = ym(view);
+    document.querySelectorAll('.bg-card').forEach(function (card) {
+      var c = card.dataset.cat, b = budgetOf(c, month), used = spentOf(c, month), left = b.total - used;
+      card.querySelector('.bg-sum').innerHTML = '<div>이 달 예산<b>' + won(b.total) + '</b></div><div>사용<b>' + won(used) + '</b></div>' +
+        '<div>잔액<b' + (left < 0 ? ' class="neg"' : '') + '>' + won(left) + '</b></div>';
+      var bi = card.querySelector('[data-b="base"]');
+      if (bi && document.activeElement !== bi) bi.value = b.base ? won(b.base.amount) : '';
+    });
   }
 
   // ── 계정 메뉴 ──
@@ -304,6 +489,7 @@
       state.step = '';
       state.receipts = await RSStore.readReceipts(state.ws);
       try { setSettings(await RSStore.readSettings(state.ws)); } catch (e) { console.warn('설정 탭', e, e.detail); }
+      try { setBudgets(await RSStore.readBudgets(state.ws)); } catch (e) { console.warn('예산 탭', e, e.detail); }
       state.offline = false;
       saveCache(state.receipts);
       kickQueue();
@@ -810,7 +996,7 @@
     admin: renderAdmin,
     home: renderHome,
     box: renderBox,
-    budget: function (r) { renderPlaceholder(r, '예산', '구분별 예산·이월·추가 예산을 설정합니다.<br>다음 단계에서 만듭니다.'); }
+    budget: renderBudget
   };
 
   function currentTab() {
