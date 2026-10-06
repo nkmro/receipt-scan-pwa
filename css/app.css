@@ -446,3 +446,9 @@ button.banner{display:block;width:calc(100% - 40px);text-align:left;border:0;cur
 .at-name small{display:block;font-size:11px;color:var(--sub)}
 .at-row + .at-file,.at-pw + .dt-hint + .at-file,.dt-hint + .at-file{margin-top:8px}
 .at-pw{margin-top:6px}
+.pc-gapji{margin:4px 14px 8px;padding:10px 12px;border:1px dashed #C9CCD6;border-radius:12px;background:#FAFAF8}
+.pc-gapji .pc-btns{padding:8px 0 0;margin:0}
+.pc-gname{font-size:13px;font-weight:600;color:var(--ink);word-break:break-all}
+.pc-ghint{font-size:12px;color:var(--sub)}
+label.mini{display:inline-flex;align-items:center;cursor:pointer}
+label.mini.dis{opacity:.6;pointer-events:none}
