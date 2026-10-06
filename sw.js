@@ -1,7 +1,7 @@
 /* 오프라인 캐시. 파일을 고치면 CACHE 이름의 숫자를 올려야 폰에 새 버전이 반영됩니다. */
-var CACHE = 'receipt-scan-v47';
+var CACHE = 'receipt-scan-v48';
 var ASSETS = [
-  './', 'index.html', 'privacy.html', 'camtest.html', 'css/app.css?v=47', 'js/config.js?v=47', 'js/auth.js?v=47', 'js/store.js?v=47', 'js/imaging.js?v=47', 'js/queue.js?v=47', 'js/ocr.js?v=47', 'js/capture.js?v=47', 'js/box.js?v=47', 'js/detail.js?v=47', 'js/layout.js?v=47', 'js/preview.js?v=47', 'js/pdf.js?v=47', 'js/gapji.js?v=47', 'js/attach.js?v=47', 'js/app.js?v=47', 'manifest.webmanifest',
+  './', 'index.html', 'privacy.html', 'camtest.html', 'css/app.css?v=48', 'js/config.js?v=48', 'js/auth.js?v=48', 'js/store.js?v=48', 'js/imaging.js?v=48', 'js/queue.js?v=48', 'js/ocr.js?v=48', 'js/capture.js?v=48', 'js/box.js?v=48', 'js/detail.js?v=48', 'js/layout.js?v=48', 'js/preview.js?v=48', 'js/pdf.js?v=48', 'js/gapji.js?v=48', 'js/attach.js?v=48', 'js/app.js?v=48', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'
 ];
 
