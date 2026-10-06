@@ -6,7 +6,20 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '0.19.3';
+  var APP_VERSION = '0.19.4';
+
+  // 네이티브 앱처럼 화면 확대·축소 막기
+  // - 안드로이드: viewport의 user-scalable=no로 막힘
+  // - iPhone(Safari·홈 화면 앱): user-scalable=no를 무시하므로 두 손가락 확대 동작을 직접 막음
+  // - 두 번 탭 확대는 CSS touch-action: manipulation으로 막음(app.css)
+  (function () {
+    var stop = function (e) { e.preventDefault(); };
+    document.addEventListener('gesturestart', stop, { passive: false });
+    document.addEventListener('gesturechange', stop, { passive: false });
+    document.addEventListener('touchmove', function (e) {
+      if (e.touches.length > 1 || (typeof e.scale === 'number' && e.scale !== 1)) e.preventDefault();
+    }, { passive: false });
+  })();
   var CATEGORIES = ['경비', '접대비', '회의비', '출장비'];
   var CACHE_KEY = 'rs.cache.receipts';
   var SET_KEY = 'rs.cache.settings';
