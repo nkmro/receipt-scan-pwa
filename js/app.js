@@ -6,7 +6,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '0.18.0';
+  var APP_VERSION = '0.18.1';
   var CATEGORIES = ['경비', '접대비', '회의비', '출장비'];
   var CACHE_KEY = 'rs.cache.receipts';
   var SET_KEY = 'rs.cache.settings';
@@ -664,9 +664,17 @@
       fileInfo: function (id) { return RSStore.fileInfo(id); },
       findMerged: function (id) { return RSStore.findMerged(id); },
       mergeGapji: mergeGapji,
-      unclaimAll: function (ids) {
+      unclaimAll: function (ids, pdfId) {
         RSStore.setClaimStatus(state.ws, ids.map(function (id) { return { id: id, status: '보관중', pdfId: '', claimedAt: '', expect: ['청구완료'] }; }), localIsoNow())
-          .then(function (r) { toast(ids.length - r.skipped.length + '건을 보관중으로 되돌렸습니다'); refresh(); })
+          .then(async function (r) {
+            var n = ids.length - r.skipped.length;
+            // 모두 되돌렸을 때만 파일을 지움(PC에서 바뀐 줄이 남아 있으면 그 줄이 아직 이 PDF를 가리킴)
+            if (pdfId && !r.skipped.length) {
+              var t = await RSStore.trashClaimFiles(pdfId);
+              toast(n + '건을 보관중으로 되돌리고 PDF 파일을 휴지통으로 옮겼습니다' + (t.failed ? ' (' + t.failed + '개는 못 옮김)' : ''));
+            } else toast(n + '건을 보관중으로 되돌렸습니다' + (r.skipped.length ? ' · PC에서 바뀐 ' + r.skipped.length + '건이 있어 PDF 파일은 그대로 둠' : ''));
+            refresh();
+          })
           .catch(function (e) { toast(e.message || '되돌리지 못했습니다'); });
       },
       quickEdit: function (it, ch, msg) {
@@ -679,6 +687,10 @@
   }
 
   // ── 화면: 영수증 상세 ──
+  // 이 PDF로 청구된 다른 영수증 수(except = 빼고 셀 영수증)
+  function pdfShare(pdfId, except) {
+    return state.receipts.filter(function (r) { return r.pdfId === pdfId && r.id !== except && r.status === '청구완료'; }).length;
+  }
   function findItem(id) { return RSBox.itemById(id, state.receipts, state.user.email); }
   function renderDetail(root) {
     if (!state.user || state.pending) return renderHome(root);
@@ -692,6 +704,7 @@
       rerender: render,
       edit: editReceipt,
       statusAction: statusAction,
+      pdfShare: pdfShare,
       retryUpload: kickQueue,
       settings: function () { return state.settings || {}; },
       saveSettings: saveSettings,
@@ -753,7 +766,7 @@
     if (kind === 'exclude') { ch = { status: '제외' }; msg = '제외했습니다'; }
     else if (kind === 'restore') { ch = { status: it.txAt && it.hasAmount ? '보관중' : (it.reason ? '확인필요' : '판독대기') }; msg = '복원했습니다'; }
     else { ch = { status: '보관중', pdfId: '', claimedAt: '' }; msg = '보관중으로 되돌렸습니다'; }
-    var prev = it.status;
+    var prev = it.status, oldPdf = kind === 'unclaim' ? it.pdfId : '';
     try {
       var res = await editReceipt(it.id, ch, it);
       render();
@@ -764,7 +777,12 @@
           editReceipt(it.id, { status: prev }, now).then(function () { toast('되돌렸습니다'); render(); })
             .catch(function (e) { toast(e.message || '되돌리지 못했습니다'); });
         });
-      } else toast(msg);
+      } else if (oldPdf && !pdfShare(oldPdf, it.id)) {
+        // 이 PDF에 남은 영수증이 없으면 파일(갑지 합본 포함)을 휴지통으로
+        var t = await RSStore.trashClaimFiles(oldPdf);
+        toast(msg + ' · PDF 파일을 휴지통으로 옮겼습니다' + (t.failed ? ' (' + t.failed + '개는 못 옮김)' : ''));
+      } else if (oldPdf) toast(msg + ' · 이 PDF에 다른 영수증이 남아 있어 파일은 그대로 둡니다');
+      else toast(msg);
     } catch (e) {
       toast(e.message || '처리하지 못했습니다');
       render();

@@ -26,7 +26,8 @@
   var REQUIRED = {
     '경비': [['account', '계정']],
     '접대비': [['topic', '내용'], ['guest', '접대상대방']],
-    '회의비': [['topic', '내용'], ['attendees', '회의참석자']]
+    '회의비': [['topic', '내용'], ['attendees', '회의참석자']],
+    '출장비': []   // 출장비는 아래 missingOf에서 결제 수단·카드사를 봄
   };
   function isAtt(it) { return it.kind === '첨부'; }   // 파일 첨부로 손입력한 건(올린 PDF가 그대로 붙음)
   function missingOf(cat, it) {
@@ -34,6 +35,11 @@
     if (!it.hasAmount || !(Number(it.amount) > 0)) m.push('금액');
     (REQUIRED[cat] || []).forEach(function (f) { if (!String(it[f[0]] || '').trim()) m.push(f[1]); });
     if ((cat === '접대비' || cat === '회의비') && it.cardType === '법인카드' && !it.corpCard) m.push('법인카드');
+    if (cat === '출장비') {   // 출장비: 결제 수단을 꼭 고르고, 개인카드면 카드사·법인카드면 어느 카드인지까지
+      if (!it.cardType) m.push('결제 수단');
+      else if (it.cardType === '개인카드' && !String(it.card || '').trim()) m.push('카드사');
+      else if (it.cardType === '법인카드' && !it.corpCard) m.push('법인카드');
+    }
     return m;
   }
   function claimMonth(items) { return mostCommon(items.map(function (it) { return it.month; })) || ''; }

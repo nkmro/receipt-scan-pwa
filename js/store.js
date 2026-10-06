@@ -304,6 +304,7 @@
     row[COL.category] = a.category;
     row[COL.status] = '보관중';
     row[COL.cardType] = a.cardType || '';
+    row[COL.card] = a.card || '';
     row[COL.txAt] = a.txDate;
     row[COL.month] = a.txDate.slice(0, 7);
     row[COL.amount] = a.amount === '' || a.amount == null ? '' : Number(a.amount);
@@ -400,6 +401,22 @@
     var q = "appProperties has { key='rsGapjiOf' and value='" + ofId + "' } and trashed=false";
     var d = await api(DRIVE + '?q=' + encodeURIComponent(q) + '&fields=files(id,name)&orderBy=createdTime desc&pageSize=1&spaces=drive');
     return d.files && d.files[0] ? d.files[0] : null;
+  }
+
+  // 보관중으로 되돌릴 때: 청구 PDF와 그 PDF로 만든 갑지+영수증 합본을 Drive 휴지통으로(30일 뒤 Drive가 자동으로 비움)
+  async function trashClaimFiles(pdfId) {
+    var ids = [pdfId], failed = 0;
+    try {
+      var q = "appProperties has { key='rsGapjiOf' and value='" + pdfId + "' } and trashed=false";
+      var d = await api(DRIVE + '?q=' + encodeURIComponent(q) + '&fields=files(id)&pageSize=20&spaces=drive');
+      (d.files || []).forEach(function (f) { ids.push(f.id); });
+    } catch (e) { /* 합본 찾기 실패해도 청구 PDF는 지움 */ }
+    for (var i = 0; i < ids.length; i++) {
+      try { await api(DRIVE + '/' + ids[i] + '?fields=id', { method: 'PATCH', json: { trashed: true } }); }
+      catch (e) { if (e.status !== 404) failed++; }
+    }
+    try { localStorage.removeItem('rs.merged.' + pdfId); } catch (e) { /* 무시 */ }
+    return { trashed: ids.length - failed, failed: failed };
   }
 
   // [다시 만들기]: 같은 파일(같은 ID·이름)의 내용만 새 PDF로 바꿈
@@ -576,6 +593,7 @@
     appendAttachment: appendAttachment,
     deleteReceipts: deleteReceipts,
     writeSettings: writeSettings,
+    trashClaimFiles: trashClaimFiles,
     readBudgets: readBudgets,
     saveBudgets: saveBudgets,
     SETTING_KEYS: SETTING_KEYS,

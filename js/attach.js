@@ -8,6 +8,7 @@
 
   var CATEGORIES = ['경비', '접대비', '회의비', '출장비'];
   var PAYS = ['개인카드', '법인카드', '현금'];
+  var CARDS = ['신한카드', '삼성카드', '현대카드', 'KB국민카드', '롯데카드', '하나카드', '우리카드', 'BC카드', 'NH농협카드'];
   var MAX = 10 * 1024 * 1024;
   var A = null, ctx = null;
 
@@ -32,7 +33,7 @@
   function render(root, c) {
     ctx = c;
     if (!A) A = { category: CATEGORIES.indexOf(c.category) >= 0 ? c.category : '경비', files: [], date: today(),
-      amount: '', pay: '개인카드', corpCard: '', desc: '', busy: '', error: '' };
+      amount: '', pay: '', card: '', corpCard: '', desc: '', busy: '', error: '' };
     var trip = A.category === '출장비';
     var h = '<header class="dt-top"><button class="icon-btn" id="atBack" aria-label="뒤로">' + BACK + '</button><h1>파일 첨부</h1></header>' +
       '<p class="hint" style="margin-top:0">AI가 읽기 어려운 영수증(통신비 내역서, 한 달 치 하이패스 내역 등)을 PDF로 올리고 금액을 직접 적어 1건으로 등록합니다.</p>';
@@ -56,10 +57,12 @@
       '<div class="dt-2">' + field(trip ? '출장일' : '거래일', '<input type="date" data-a="date" max="' + today() + '" value="' + esc(A.date) + '">', true,
         trip ? '같은 출장일의 영수증과 묶입니다' : '') +
       field('금액', '<div class="dt-won"><input type="text" inputmode="numeric" data-a="amount" value="' + esc(A.amount ? won(A.amount) : '') + '" placeholder="0"><span>원</span></div>', true) + '</div>' +
-      field('결제 수단', seg('pay', PAYS, A.pay), false) +
+      field('결제 수단', seg('pay', PAYS, A.pay), true, A.pay ? '' : 'AI 판독을 하지 않으니 직접 골라 주세요 (홈 카드별 합계에 쓰임)') +
+      (A.pay === '개인카드' ? field('카드사', '<input type="text" data-a="card" list="atCards" maxlength="20" placeholder="예: 신한카드" value="' + esc(A.card) + '">' +
+        '<datalist id="atCards">' + CARDS.map(function (c) { return '<option value="' + c + '">'; }).join('') + '</datalist>', true) : '') +
       (A.pay === '법인카드' ? field('법인카드', '<select data-a="corpCard"><option value="">선택</option>' + RSAuth.corpCards().map(function (cc) {
         return '<option' + (A.corpCard === cc ? ' selected' : '') + '>' + esc(cc) + '</option>';
-      }).join('') + '</select>', A.category === '접대비' || A.category === '회의비') : '') +
+      }).join('') + '</select>', true) : '') +
       field(descLabel(), '<input type="text" data-a="desc" maxlength="100" placeholder="예: 9월 통신비, 9월 하이패스" value="' + esc(A.desc) + '">', true,
         '인트라넷 ' + descLabel() + ' 칸에 들어가고, 보관함 목록에도 이 이름으로 보입니다. 나머지 인트라넷 칸(계정 등)은 저장한 뒤 상세 화면에서 채웁니다') +
       '</div></section>';
@@ -83,7 +86,9 @@
     if (!A.date) return '날짜를 적어 주세요';
     if (!(Number(A.amount) > 0)) return '금액을 적어 주세요';
     if (!A.desc.trim()) return descLabel() + '을(를) 적어 주세요';
-    if (A.pay === '법인카드' && (A.category === '접대비' || A.category === '회의비') && !A.corpCard) return '법인카드를 골라 주세요';
+    if (!A.pay) return '결제 수단을 골라 주세요';
+    if (A.pay === '개인카드' && !A.card.trim()) return '카드사를 적어 주세요';
+    if (A.pay === '법인카드' && !A.corpCard) return '법인카드를 골라 주세요';
     return '';
   }
 
@@ -99,6 +104,7 @@
       b.onclick = function () {
         var k = b.dataset.a; A[k] = b.dataset.v;
         if (k === 'pay' && A.pay !== '법인카드') A.corpCard = '';
+        if (k === 'pay' && A.pay !== '개인카드') A.card = '';
         redraw();
       };
     });
@@ -192,6 +198,7 @@
       var id = await ctx.saveAttachment({
         category: A.category, file: file, txDate: A.date,
         amount: A.amount === '' ? '' : Number(A.amount), cardType: A.pay, corpCard: A.pay === '법인카드' ? A.corpCard : '',
+        card: A.pay === '개인카드' ? A.card.trim() : A.pay === '현금' ? '현금' : '',
         desc: A.desc.trim()
       }, function (m) { A.busy = m; redraw(); });
       A = null;

@@ -356,8 +356,8 @@
     root.querySelectorAll('[data-unclaim]').forEach(function (b) {
       b.onclick = function () {
         var id = b.dataset.unclaim, ids = list.filter(function (it) { return it.pdfId === id; }).map(function (it) { return it.id; });
-        if (!confirm(ids.length + '건을 모두 보관중으로 되돌릴까요?\n이미 만든 PDF 파일은 지우지 않습니다.')) return;
-        ctx.unclaimAll(ids);
+        if (!confirm(ids.length + '건을 모두 보관중으로 되돌릴까요?\n\n만든 PDF 파일' + (B.cat === '출장비' ? '(갑지+영수증 합본 포함)' : '') + '은 Drive 휴지통으로 옮깁니다.\n(30일 안에는 Drive 휴지통에서 되살릴 수 있습니다)')) return;
+        ctx.unclaimAll(ids, id);
       };
     });
     var rc = root.querySelector('#bxRemakeCancel');

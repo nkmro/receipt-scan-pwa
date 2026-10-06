@@ -113,7 +113,7 @@
     var other = [80, 58].indexOf(Number(v.widthMm)) < 0;
     h += section('카드 판독 정보', 'sec-card',
       field('카드사', '<input type="text" data-k="card" list="dtCards" maxlength="20" placeholder="예: 신한카드, 현금" value="' + esc(v.card) + '"' + dis + '>' +
-        '<datalist id="dtCards">' + CARDS.map(function (c) { return '<option value="' + c + '">'; }).join('') + '</datalist>') +
+        '<datalist id="dtCards">' + CARDS.map(function (c) { return '<option value="' + c + '">'; }).join('') + '</datalist>', '', v.category === '출장비' && v.cardType === '개인카드') +
       field('가맹점명', '<input type="text" data-k="merchant" maxlength="60" value="' + esc(v.merchant) + '"' + dis + '>') +
       field('가맹점 주소', '<input type="text" data-k="address" maxlength="100" value="' + esc(v.address) + '"' + dis + '>') +
       field('귀속 월', '<input type="month" data-k="month" value="' + esc(v.month) + '"' + dis + '>', errs.month, false,
@@ -166,15 +166,17 @@
   // 결제 수단(개인카드·법인카드·현금). 법인카드면 회사 법인카드 중 하나를 고름 → 인트라넷 사용구분·사용내역이 이것을 따라감
   function payField(v, dis) {
     var types = [['개인카드', '개인카드'], ['법인카드', '법인카드'], ['현금', '현금']];
-    var cur = v.cardType || '개인카드';
+    var trip = v.category === '출장비';   // 출장비는 결제 수단 필수(고르기 전에는 아무것도 안 눌린 상태)
+    var cur = v.cardType || (trip ? '' : '개인카드');
     var h = field('결제 수단', '<div class="dt-seg">' + types.map(function (x) {
       return '<button type="button" data-k="cardType" data-v="' + x[0] + '"' + (cur === x[0] ? ' class="on"' : '') + dis + '>' + x[1] + '</button>';
-    }).join('') + '</div>', '', false, cur === '법인카드' ? '' : '인트라넷 사용구분(개인청구·현금경비/법인카드)이 이 값에 따라 정해집니다');
+    }).join('') + '</div>', '', trip, trip ? (cur === '개인카드' ? '개인카드면 아래 카드 판독 정보의 카드사도 꼭 적어 주세요' : cur ? '' : 'PDF를 만들려면 꼭 골라 주세요')
+      : cur === '법인카드' ? '' : '인트라넷 사용구분(개인청구·현금경비/법인카드)이 이 값에 따라 정해집니다');
     if (cur === '법인카드') {
       var cards = RSAuth.corpCards();
       h += field('법인카드', '<select data-k="corpCard"' + dis + '><option value="">선택</option>' + cards.map(function (c) {
         return '<option' + (v.corpCard === c ? ' selected' : '') + '>' + esc(c) + '</option>';
-      }).join('') + (v.corpCard && cards.indexOf(v.corpCard) < 0 ? '<option selected>' + esc(v.corpCard) + '</option>' : '') + '</select>', '', v.category === '접대비' || v.category === '회의비');
+      }).join('') + (v.corpCard && cards.indexOf(v.corpCard) < 0 ? '<option selected>' + esc(v.corpCard) + '</option>' : '') + '</select>', '', v.category === '접대비' || v.category === '회의비' || trip);
     }
     return h;
   }
@@ -332,7 +334,10 @@
     if (rs) rs.onclick = function () { statusAction('restore'); };
     var uc = q('#dtUnclaim');
     if (uc) uc.onclick = function () {
-      if (!confirm('이 영수증을 보관중으로 되돌릴까요?\n이미 만든 PDF 파일은 지우지 않습니다.')) return;
+      var r = D.orig, others = r.pdfId && ctx.pdfShare ? ctx.pdfShare(r.pdfId, r.id) : 0;
+      if (!confirm('이 영수증을 보관중으로 되돌릴까요?\n\n' + (others
+        ? '같은 PDF에 다른 영수증 ' + others + '건이 남아 있어 PDF 파일은 그대로 둡니다.\n(보관함 청구완료에서 [다시 만들기]로 고칠 수 있습니다)'
+        : '만든 PDF 파일' + (r.category === '출장비' ? '(갑지+영수증 합본 포함)' : '') + '은 Drive 휴지통으로 옮깁니다.\n(30일 안에는 Drive 휴지통에서 되살릴 수 있습니다)'))) return;
       statusAction('unclaim');
     };
   }
