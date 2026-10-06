@@ -9,18 +9,18 @@
   var SHEETS = 'https://sheets.googleapis.com/v4/spreadsheets';
   var FOLDER = 'application/vnd.google-apps.folder';
   var SHEET = 'application/vnd.google-apps.spreadsheet';
-  var SCHEMA_VERSION = 6; // 6: AK열(법인카드) 추가. // 2: 카드사 열(F) 추가, 3: 카드 구분 열(G) 추가, 4: 맨 오른쪽 W~AH열(회전·구분별 추가 입력) 추가, 5: AI·AJ열(교통수단·운행시간) 추가, Z열 이름 '회의 내용'→'내용'(접대비·회의비 공용)
+  var SCHEMA_VERSION = 7; // 7: AL열(카드 번호, AI가 읽은 *포함 번호) 추가. 6: AK열(법인카드) 추가. // 2: 카드사 열(F) 추가, 3: 카드 구분 열(G) 추가, 4: 맨 오른쪽 W~AH열(회전·구분별 추가 입력) 추가, 5: AI·AJ열(교통수단·운행시간) 추가, Z열 이름 '회의 내용'→'내용'(접대비·회의비 공용)
 
   // 열 순서는 "데이터·API 스펙" 탭 표 순서(A~V)
   var RECEIPT_HEADERS = ['ID', '유형', '촬영일시', '구분', '상태', '카드사', '카드 구분', '거래일시', '귀속 월', '금액', '가맹점명', '가맹점 주소',
     '내역', '메모', '영수증 폭', '판독 신뢰도', '확인 사유', '판독 시도', '원본 파일 ID', '청구 PDF ID', '청구일시', '앱 수정일시',
     // 4판에서 추가(W~AH): 기존 열은 움직이지 않고 오른쪽에 붙임
-    '회전', '출장일', '접대상대방', '내용', '계정', '주유량(L)', '업무내용', '업무용 차량', '출발지', '도착지', '운행거리(km)', '참석자', '교통수단', '운행시간', '법인카드'];
-  var LAST_COL = 'AK';
+    '회전', '출장일', '접대상대방', '내용', '계정', '주유량(L)', '업무내용', '업무용 차량', '출발지', '도착지', '운행거리(km)', '참석자', '교통수단', '운행시간', '법인카드', '카드 번호'];
+  var LAST_COL = 'AL';
   // 열 번호(0부터). 상세 화면 저장에서 씀
   var F = { category: 3, status: 4, card: 5, cardType: 6, txAt: 7, month: 8, amount: 9, merchant: 10, address: 11, desc: 12, memo: 13,
     widthMm: 14, conf: 15, reason: 16, tries: 17, pdfId: 19, claimedAt: 20, updatedAt: 21, rot: 22, tripDate: 23, guest: 24, topic: 25, account: 26,
-    fuel: 27, work: 28, car: 29, from: 30, to: 31, km: 32, attendees: 33, transport: 34, driveTime: 35, corpCard: 36 };
+    fuel: 27, work: 28, car: 29, from: 30, to: 31, km: 32, attendees: 33, transport: 34, driveTime: 35, corpCard: 36, cardNo: 37 };
   var DATE_FIELDS = { txAt: 1, tripDate: 1 }; // 시트에서 날짜로 보이게(PC에서 정렬·필터 가능) 입력
   var BUDGET_HEADERS = ['ID', '적용 월', '구분', '유형', '이월 방식', '금액', '메모', '앱 수정일시'];
   var COL = { id: 0, kind: 1, capturedAt: 2, category: 3, status: 4, card: 5, cardType: 6, txAt: 7, month: 8, amount: 9 };
@@ -225,7 +225,8 @@
         attendees: String(r[F.attendees] || ''),
         transport: String(r[F.transport] || ''),
         driveTime: String(r[F.driveTime] || ''),
-        corpCard: String(r[F.corpCard] || '')
+        corpCard: String(r[F.corpCard] || ''),
+        cardNo: String(r[F.cardNo] || '')            // AI가 읽은 카드 번호(*포함)
       };
   }
 
@@ -570,7 +571,44 @@
     if (rows.length) await api(SHEETS + '/' + ws.sheetId + '/values/' + encodeURIComponent('예산!A2:H' + (rows.length + 1)) + '?valueInputOption=RAW', { method: 'PUT', json: { values: rows } });
   }
 
+  // ── 카드 기억(시트 '카드' 탭): AI가 읽은 카드 번호 → 사용자가 고른 결제 수단·카드사·법인카드 ──
+  // 처음 보는 카드는 사용자가 상세에서 고르고, 그 선택을 여기에 적어 두었다가 다음 판독 때 자동으로 채움
+  var CARD_HEADERS = ['카드 번호', '결제 수단', '카드사', '법인카드', '수정일시'];
+  var CARD_AMBIG = '(여러 장)';   // 같은 번호로 찍히는 법인카드가 여러 장일 때
+  function cardKey(num) { var k = String(num || '').replace(/[^\d*]/g, ''); return (k.match(/\d/g) || []).length >= 4 ? k : ''; }
+  async function ensureCardTab(ws) {
+    var info = await api(SHEETS + '/' + ws.sheetId + '?fields=sheets.properties.title');
+    if (info.sheets.some(function (s) { return s.properties.title === '카드'; })) return;
+    await api(SHEETS + '/' + ws.sheetId + ':batchUpdate', { method: 'POST', json: { requests: [{ addSheet: { properties: { title: '카드', gridProperties: { frozenRowCount: 1 } } } }] } });
+    await api(SHEETS + '/' + ws.sheetId + '/values:batchUpdate', { method: 'POST', json: { valueInputOption: 'RAW', data: [{ range: '카드!A1:E1', values: [CARD_HEADERS] }] } });
+  }
+  async function readCards(ws) {
+    var d;
+    try { d = await api(SHEETS + '/' + ws.sheetId + '/values/' + encodeURIComponent('카드!A2:E500')); }
+    catch (e) { if (e.status !== 400) throw e; await ensureCardTab(ws); return {}; }
+    var o = {};
+    (d.values || []).forEach(function (r) {
+      var k = cardKey(r[0]);
+      if (k) o[k] = { type: String(r[1] || '').trim(), card: String(r[2] || '').trim(), corpCard: String(r[3] || '').trim() };
+    });
+    return o;
+  }
+  // 한 줄 고치거나 추가. e = {type, card, corpCard}
+  async function writeCard(ws, key, e) {
+    await ensureCardTab(ws);
+    var d = await api(SHEETS + '/' + ws.sheetId + '/values/' + encodeURIComponent('카드!A2:A500'));
+    var rows = (d.values || []).map(function (r) { return cardKey(r[0]); });
+    var i = rows.indexOf(key), n = (i < 0 ? rows.length : i) + 2;
+    var nowIso = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    await api(SHEETS + '/' + ws.sheetId + '/values/' + encodeURIComponent('카드!A' + n + ':E' + n) + '?valueInputOption=RAW', {
+      method: 'PUT', json: { values: [[key, e.type, e.card || '', e.corpCard || '', nowIso]] } });
+  }
+
   window.RSStore = {
+    readCards: readCards,
+    writeCard: writeCard,
+    cardKey: cardKey,
+    CARD_AMBIG: CARD_AMBIG,
     monthFolder: monthFolder,
     findUpload: findUpload,
     uploadJpeg: uploadJpeg,

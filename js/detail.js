@@ -56,7 +56,7 @@
       guest: r.guest || '', topic: r.topic || '', account: r.account || '', fuel: r.fuel || '', work: r.work || '',
       car: r.car || '', from: r.from || '', to: r.to || '', km: r.km || '', tripDate: r.tripDate || '', attendees: r.attendees || '',
       transport: r.transport || '', driveTime: r.driveTime || '',
-      card: r.card || '', cardType: r.cardType || '', corpCard: r.corpCard || ''
+      card: r.card || '', cardType: r.cardType || '', corpCard: r.corpCard || '', cardNo: r.cardNo || ''
     };
   }
 
@@ -114,6 +114,7 @@
     h += section('카드 판독 정보', 'sec-card',
       field('카드사', '<input type="text" data-k="card" list="dtCards" maxlength="20" placeholder="예: 신한카드, 현금" value="' + esc(v.card) + '"' + dis + '>' +
         '<datalist id="dtCards">' + CARDS.map(function (c) { return '<option value="' + c + '">'; }).join('') + '</datalist>', '', v.category === '출장비' && v.cardType === '개인카드') +
+      (v.cardNo ? field('카드 번호 (AI 판독)', '<div class="dt-ro">' + esc(v.cardNo) + '</div>') : '') +
       field('가맹점명', '<input type="text" data-k="merchant" maxlength="60" value="' + esc(v.merchant) + '"' + dis + '>') +
       field('가맹점 주소', '<input type="text" data-k="address" maxlength="100" value="' + esc(v.address) + '"' + dis + '>') +
       field('귀속 월', '<input type="month" data-k="month" value="' + esc(v.month) + '"' + dis + '>', errs.month, false,
@@ -167,16 +168,18 @@
   function payField(v, dis) {
     var types = [['개인카드', '개인카드'], ['법인카드', '법인카드'], ['현금', '현금']];
     var trip = v.category === '출장비';   // 출장비는 결제 수단 필수(고르기 전에는 아무것도 안 눌린 상태)
-    var cur = v.cardType || (trip ? '' : '개인카드');
+    var ask = !!v.cardNo;                  // AI가 카드 번호를 읽은 영수증: 고르면 다음부터 같은 카드는 자동
+    var cur = v.cardType || (trip || ask ? '' : '개인카드');
     var h = field('결제 수단', '<div class="dt-seg">' + types.map(function (x) {
       return '<button type="button" data-k="cardType" data-v="' + x[0] + '"' + (cur === x[0] ? ' class="on"' : '') + dis + '>' + x[1] + '</button>';
-    }).join('') + '</div>', '', trip, trip ? (cur === '개인카드' ? '개인카드면 아래 카드 판독 정보의 카드사도 꼭 적어 주세요' : cur ? '' : 'PDF를 만들려면 꼭 골라 주세요')
+    }).join('') + '</div>', '', trip || (ask && !v.cardType), ask && !v.cardType ? '카드 ' + v.cardNo + ' — 한 번 고르면 다음부터 이 카드는 자동으로 채웁니다'
+      : trip ? (cur === '개인카드' ? '개인카드면 아래 카드 판독 정보의 카드사도 꼭 적어 주세요' : cur ? '' : 'PDF를 만들려면 꼭 골라 주세요')
       : cur === '법인카드' ? '' : '인트라넷 사용구분(개인청구·현금경비/법인카드)이 이 값에 따라 정해집니다');
     if (cur === '법인카드') {
       var cards = RSAuth.corpCards();
       h += field('법인카드', '<select data-k="corpCard"' + dis + '><option value="">선택</option>' + cards.map(function (c) {
         return '<option' + (v.corpCard === c ? ' selected' : '') + '>' + esc(c) + '</option>';
-      }).join('') + (v.corpCard && cards.indexOf(v.corpCard) < 0 ? '<option selected>' + esc(v.corpCard) + '</option>' : '') + '</select>', '', v.category === '접대비' || v.category === '회의비' || trip);
+      }).join('') + (v.corpCard && cards.indexOf(v.corpCard) < 0 ? '<option selected>' + esc(v.corpCard) + '</option>' : '') + '</select>', '', v.category === '접대비' || v.category === '회의비' || trip || ask);
     }
     return h;
   }
@@ -415,7 +418,10 @@
     if (v.cardType !== '법인카드' && D.base.corpCard && ch.cardType !== undefined) ch.corpCard = '';
     // 판독대기·확인필요 → 거래일·금액이 있으면 보관중
     var st = D.orig.st;
-    if ((st === '판독대기' || st === '확인필요') && v.date && v.amount !== '') { ch.status = '보관중'; ch.reason = ''; }
+    // 단, AI가 카드 번호를 읽은 영수증은 결제 수단(법인카드면 어느 카드인지)까지 골라야 함
+    var payOk = !v.cardNo || (v.cardType && (v.cardType !== '법인카드' || v.corpCard));
+    if ((st === '판독대기' || st === '확인필요') && v.date && v.amount !== '' && payOk) { ch.status = '보관중'; ch.reason = ''; }
+    else if (st === '확인필요' && v.date && v.amount !== '' && !payOk && Object.keys(ch).length) ch.reason = '결제 수단을 골라 주세요';
     return ch;
   }
 
@@ -426,8 +432,9 @@
     D.saving = true; D.error = ''; redraw();
     try {
       var res = await ctx.edit(D.id, ch, D.orig);
+      if (D.v.cardNo && D.v.cardType && ctx.learnCard) ctx.learnCard(D.v.cardNo, D.v);   // 이 카드의 결제 수단을 기억
       await registerCar();
-      var msg = res.conflicts.length ? 'PC에서 수정된 값으로 바뀌었습니다: ' + res.conflicts.join(', ') : (ch.status === '보관중' ? '저장했습니다 · 이제 PDF에 넣을 수 있습니다' : '저장했습니다');
+      var msg = res.conflicts.length ? 'PC에서 수정된 값으로 바뀌었습니다: ' + res.conflicts.join(', ') : (ch.status === '보관중' ? '저장했습니다 · 이제 PDF에 넣을 수 있습니다' : ch.reason === '결제 수단을 골라 주세요' ? '저장했습니다 · 결제 수단을 고르면 보관중이 됩니다' : '저장했습니다');
       D = null;
       ctx.toast(msg);
       ctx.back();

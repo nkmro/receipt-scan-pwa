@@ -6,11 +6,12 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '0.19.0';
+  var APP_VERSION = '0.19.1';
   var CATEGORIES = ['경비', '접대비', '회의비', '출장비'];
   var CACHE_KEY = 'rs.cache.receipts';
   var SET_KEY = 'rs.cache.settings';
   var BUD_KEY = 'rs.cache.budgets';
+  var CARD_KEY = 'rs.cache.cardMemory';
   var BUDGET_CATS = ['접대비', '회의비'];   // 예산이 있는 구분(경비·출장비는 예산 없음)
 
   // ── 상태 ──
@@ -25,6 +26,7 @@
     receipts: loadCache(), // 시트에서 읽은 영수증 목록
     settings: loadSettingsCache(), // 내 정보(시트 '설정' 탭)
     budgets: loadJson(BUD_KEY, []), // 예산(시트 '예산' 탭)
+    cardMemory: loadJson(CARD_KEY, {}), // 카드 기억(시트 '카드' 탭): 카드 번호 → {type, card, corpCard}
     loading: false,
     step: '',              // 준비 중 안내 문구
     error: '',
@@ -38,6 +40,24 @@
   function setBudgets(list) {
     state.budgets = list || [];
     try { localStorage.setItem(BUD_KEY, JSON.stringify(state.budgets)); } catch (e) { /* 무시 */ }
+  }
+  function setCardMemory(o) {
+    state.cardMemory = o || {};
+    try { localStorage.setItem(CARD_KEY, JSON.stringify(state.cardMemory)); } catch (e) { /* 무시 */ }
+  }
+  // 상세에서 처음 보는 카드의 결제 수단을 고르면 기억(같은 번호에 다른 법인카드를 고른 적이 있으면 "여러 장"으로)
+  function learnCard(cardNo, v) {
+    var key = RSStore.cardKey(cardNo);
+    if (!key || !v.cardType || !state.ws) return;
+    var e = { type: v.cardType, card: v.cardType === '현금' ? '현금' : (v.card || ''), corpCard: v.cardType === '법인카드' ? (v.corpCard || '') : '' };
+    var old = state.cardMemory[key];
+    if (old && old.type === '법인카드' && e.type === '법인카드') {
+      if (!e.corpCard) e.corpCard = old.corpCard;
+      else if (old.corpCard && old.corpCard !== e.corpCard) e.corpCard = RSStore.CARD_AMBIG;
+    }
+    if (old && old.type === e.type && old.card === e.card && old.corpCard === e.corpCard) return;
+    var m = Object.assign({}, state.cardMemory); m[key] = e; setCardMemory(m);
+    RSStore.writeCard(state.ws, key, e).catch(function (err) { console.warn('카드 기억 저장 실패', err); });
   }
   function loadSettingsCache() {
     try { return JSON.parse(localStorage.getItem(SET_KEY) || '{}') || {}; } catch (e) { return {}; }
@@ -198,7 +218,7 @@
     state.selection = null;
     state.user = null; state.ws = null; state.receipts = []; state.error = ''; state.pending = null;
     state.admin = { list: null, loading: false, error: '', waiting: 0 };
-    saveCache([]); setSettings({}); setBudgets([]);
+    saveCache([]); setSettings({}); setBudgets([]); setCardMemory({});
     location.hash = '#/home';
     render();
   }
@@ -491,6 +511,7 @@
       state.receipts = await RSStore.readReceipts(state.ws);
       try { setSettings(await RSStore.readSettings(state.ws)); } catch (e) { console.warn('설정 탭', e, e.detail); }
       try { setBudgets(await RSStore.readBudgets(state.ws)); } catch (e) { console.warn('예산 탭', e, e.detail); }
+      try { setCardMemory(await RSStore.readCards(state.ws)); } catch (e) { console.warn('카드 탭', e, e.detail); }
       state.offline = false;
       saveCache(state.receipts);
       kickQueue();
@@ -610,7 +631,7 @@
     state.ocrStep = '0/' + list.length; render();
     RSOcr.run(state.ws, list, {
       blobOf: function (it) { return RSQueue.get(it.id).then(function (q) { return q && q.blob ? q.blob : null; }).catch(function () { return null; }); },
-      cards: function () { return RSAuth.corpCards(); },
+      memory: function () { return state.cardMemory; },
       onStep: function (n, total) { state.ocrStep = n + '/' + total; if (currentTab() === 'home') render(); },
       onDone: function (id) { RSQueue.release(id).catch(function () {}); }
     }).then(function (out) {
@@ -734,6 +755,7 @@
       edit: editReceipt,
       statusAction: statusAction,
       pdfShare: pdfShare,
+      learnCard: learnCard,
       retryUpload: kickQueue,
       settings: function () { return state.settings || {}; },
       saveSettings: saveSettings,

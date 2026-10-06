@@ -2,6 +2,7 @@
    - 판독대기 영수증을 하나씩 중계 서버(/v1/ocr → DeepSeek)로 보내 거래일시·금액·가맹점·주소·결제 수단·카드사를 채움
    - 사진: 폰에 남아 있으면 그것을, 없으면 Drive 원본을 받아 긴 변 1300px JPEG로 줄여 보냄
    - 결과가 확실하면 보관중, 거래일·금액이 비거나 AI가 확신하지 못하면 확인필요(사유 적음)
+   - 결제 수단: 카드 번호(앞자리 등 *포함)를 시트 '카드' 탭에 기억해 둔 선택으로 채움. 처음 보는 카드는 확인필요 → 상세에서 고르면 기억
    - 이미 사람이 적어 둔 칸은 덮어쓰지 않음. 실패하면 판독 시도를 1 올리고, 3번 실패하면 확인필요 */
 (function () {
   'use strict';
@@ -38,16 +39,8 @@
     return String(s).slice(0, 20);
   }
 
-  // 카드 번호 끝 4자리가 회사 법인카드(이름 끝 4자리)와 같으면 그 법인카드
-  function corpMatch(num, cards) {
-    var m = /(\d{4})\D*$/.exec(String(num || ''));
-    if (!m) return '';
-    var hit = (cards || []).filter(function (c) { var x = /(\d{4})\s*$/.exec(c); return x && x[1] === m[1]; });
-    return hit.length === 1 ? hit[0] : '';
-  }
-
-  // 판독 결과 → 시트에 쓸 값과 상태. row = 지금 시트 값(rowToObj 결과)
-  function decide(res, row, cards) {
+  // 판독 결과 → 시트에 쓸 값과 상태. row = 지금 시트 값(rowToObj 결과), mem = 카드 기억(카드 번호 → 사용자가 고른 값)
+  function decide(res, row, mem) {
     var ch = {}, why = [];
     var date = res.txDate, conf = res.confidence || {};
     if (date && !row.txAt) ch.txAt = date + (res.txTime ? ' ' + res.txTime : '');
@@ -55,13 +48,25 @@
     if (res.amount && !row.hasAmount) ch.amount = res.amount;
     if (res.merchant && !row.merchant) ch.merchant = res.merchant;
     if (res.address && !row.address) ch.address = res.address;
+    // 결제 수단: 카드 번호로 기억해 둔 선택을 씀. 처음 보는 카드는 사용자가 고르도록 확인필요
+    var key = RSStore.cardKey(res.cardNumber), known = key && mem ? mem[key] : null;
+    if (key && !row.cardNo) ch.cardNo = res.cardNumber;
     if (!row.cardType) {                                           // 사람이 고른 결제 수단은 그대로
-      if (res.payMethod === 'cash') { ch.cardType = '현금'; if (!row.card) ch.card = '현금'; }
-      else if (res.payMethod === 'card' || res.cardCompany || res.cardNumber) {
-        var corp = corpMatch(res.cardNumber, cards);
-        if (corp) { ch.cardType = '법인카드'; ch.corpCard = corp; }
-        else ch.cardType = '개인카드';
+      if (known && known.type) {
+        ch.cardType = known.type;
+        if (!row.card && (known.card || known.type === '현금')) ch.card = known.card || '현금';
+        if (known.type === '법인카드') {
+          if (known.corpCard && known.corpCard !== RSStore.CARD_AMBIG) ch.corpCard = known.corpCard;
+          else why.push('같은 번호로 찍히는 법인카드가 여러 장입니다. 어느 카드인지 골라 주세요');
+        }
+      } else if (key) {
         if (!row.card && res.cardCompany) ch.card = normCompany(res.cardCompany);
+        why.push('처음 보는 카드입니다. 결제 수단(개인·법인)을 골라 주세요');
+      } else if (res.payMethod === 'cash') {
+        ch.cardType = '현금'; if (!row.card) ch.card = '현금';
+      } else if (res.payMethod === 'card' || res.cardCompany) {
+        if (!row.card && res.cardCompany) ch.card = normCompany(res.cardCompany);
+        why.push('카드 번호를 읽지 못했습니다. 결제 수단(개인·법인)을 골라 주세요');
       }
     }
     ch.conf = ['tx_date', 'amount', 'merchant', 'address'].map(function (k) { return k + ':' + (conf[k] === 'high' ? 'high' : 'low'); }).join(' ');
@@ -90,7 +95,7 @@
     return ch;
   }
 
-  // list = 판독대기 영수증들. ctx = { blobOf(it), cards(), onStep(n, total) }
+  // list = 판독대기 영수증들. ctx = { blobOf(it), memory(), onStep(n, total), onDone(id) }
   // 돌려주는 값: { done, need, failed, stop(멈춘 이유 문구) }
   async function run(ws, list, ctx) {
     if (running) return null;
@@ -121,7 +126,7 @@
           continue;
         }
         var ch = await apply(ws, it.id, function (row) {
-          var c = decide(res, row, ctx.cards());
+          var c = decide(res, row, ctx.memory());
           c.tries = (row.tries || 0) + 1;
           return c;
         });
@@ -137,6 +142,6 @@
     run: run,
     busy: function () { return running; },
     MAX_TRIES: MAX_TRIES,
-    _test: { decide: decide, corpMatch: corpMatch, normCompany: normCompany }
+    _test: { decide: decide, normCompany: normCompany }
   };
 })();
