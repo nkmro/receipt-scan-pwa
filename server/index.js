@@ -5,6 +5,7 @@
 //   3) 관리자 화면용: 사용자 목록·승인·거절·사용 중지
 //   4) 이름: Google 이름을 받아 두고, 직원이 직접 고친 이름(예: 홍길동 대리)을 표시 이름으로 씀
 //   5) 법인카드 목록: 관리자가 앱에서 고치고(POST /v1/admin/cards), 모든 직원은 로그인·토큰 갱신 때 함께 받음
+//   7) 백업: GET /v1/admin/backup (관리자만) — 사용자 승인 목록·법인카드 목록을 JSON으로 돌려줌
 //   6) AI 판독: POST /v1/ocr (승인된 계정만, 계정별 하루 상한). 사진은 DeepSeek에 보내기만 하고 저장하지 않음
 //
 // 환경변수
@@ -423,6 +424,19 @@ async function ocr(req, res) {
   send(res, 200, { result: cleanOcr(parsed) });
 }
 
+// GET /v1/admin/backup  (관리자 앱이 하루 한 번 받아 관리자 Drive '백업' 폴더에 JSON으로 저장)
+async function adminBackup(req, res) {
+  if (!(await requireAdmin(req, res))) return;
+  const snap = await users().get();
+  const list = snap.docs.map(d => {
+    const x = d.data(), o = { id: d.id };
+    Object.keys(x).forEach(k => { o[k] = x[k] && typeof x[k].toDate === 'function' ? x[k].toDate().toISOString() : x[k]; });
+    return o;
+  });
+  const cs = await configDoc().get();
+  send(res, 200, { at: new Date().toISOString(), users: list, corpCards: cs.exists ? cs.data().cards || [] : DEFAULT_CARDS.slice() });
+}
+
 const routes = {
   'POST /v1/auth/exchange': exchange,
   'POST /v1/auth/refresh': refresh,
@@ -432,6 +446,7 @@ const routes = {
   'POST /v1/admin/users/status': adminSetStatus,
   'POST /v1/admin/cards': adminSetCards,
   'POST /v1/ocr': ocr,
+  'GET /v1/admin/backup': adminBackup,
   // Cloud Run은 /healthz 주소를 자체 용도로 예약해 쓰므로 다른 이름을 씀
   'GET /v1/health': (req, res) => send(res, 200, { ok: true })
 };
