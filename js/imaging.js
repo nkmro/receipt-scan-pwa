@@ -325,12 +325,25 @@
     for (x = 0; x < w; x++) { [0, h - 1].forEach(function (yy) { var q = (yy * w + x) * 4; br.push(d[q]); bg.push(d[q + 1]); bb.push(d[q + 2]); }); }
     for (y = 0; y < h; y++) { [0, w - 1].forEach(function (xx) { var q = (y * w + xx) * 4; br.push(d[q]); bg.push(d[q + 1]); bb.push(d[q + 2]); }); }
     var med = function (a) { a.sort(function (u, v) { return u - v; }); return a[a.length >> 1]; };
-    var mr = med(br), mg = med(bg), mb = med(bb), mask2 = new Uint8Array(n);
+    var mr = med(br), mg = med(bg), mb = med(bb), mask2 = new Uint8Array(n), dist = new Uint8Array(n), dh = new Uint32Array(256);
     for (p = 0; p < n; p++) {
       var dr = d[p * 4] - mr, dg = d[p * 4 + 1] - mg, db = d[p * 4 + 2] - mb;
-      mask2[p] = dr * dr + dg * dg + db * db > 40 * 40 ? 1 : 0;
+      dist[p] = Math.min(255, Math.sqrt(dr * dr + dg * dg + db * db) | 0); dh[dist[p]]++;
     }
+    // 바탕과의 색 차이 기준을 사진마다 정함(Otsu). 아이보리 책상처럼 차이가 작아도 잡히게, 단 너무 작은 차이(잡음)는 무시
+    var t2 = Math.max(14, otsu(dh, n));
+    for (p = 0; p < n; p++) mask2[p] = dist[p] > t2 ? 1 : 0;
     cand.push(mask2);
+    // 방법 C: 색이 옅은(무채색에 가까운) 밝은 부분 = 종이. 나무·주황빛 책상처럼 바탕에 색이 있을 때, 밝기가 비슷해도 구분됨
+    var sat = new Uint8Array(n), sh = new Uint32Array(256), mask3 = new Uint8Array(n);
+    for (p = 0; p < n; p++) {
+      var r0 = d[p * 4], g0 = d[p * 4 + 1], b0 = d[p * 4 + 2];
+      var mx = Math.max(r0, g0, b0), mn = Math.min(r0, g0, b0);
+      sat[p] = mx ? Math.min(255, ((mx - mn) * 255 / mx) | 0) : 0; sh[sat[p]]++;
+    }
+    // 종이(감열지)는 채도가 아주 낮음(0~20). 바탕의 빛 반사 부분도 채도가 조금 낮아지므로 기준은 Otsu 값과 35 중 작은 쪽
+    var t3 = Math.min(35, otsu(sh, n));
+    if (t3 > 8) { for (p = 0; p < n; p++) mask3[p] = sat[p] <= t3 && L[p] > 90 ? 1 : 0; cand.push(mask3); }
     // 가는 선·작은 점이 종이에 붙어 테두리를 끌어당기지 않도록 한 번 깎았다가 다시 불림(열기 연산)
     function open2(m) {
       var r = 2, e = new Uint8Array(n), o = new Uint8Array(n), x2, y2, i2, j2, ok;
@@ -352,9 +365,8 @@
       return o;
     }
     var best = null;
-    // 밝기 방식(A)을 먼저 쓰고, A로 못 찾을 때만 바탕색 방식(B)을 씀
-    cand.forEach(function (m0) {
-      if (best) return;
+    // 세 방식으로 모두 찾아 보고, 사각형에 가장 꽉 차고(채움 비율) 사진 끝에 붙지 않은 것을 고름
+    cand.forEach(function (m0, ci) {
       var m = open2(m0);
       var blob = largestBlob(m, w, h);
       if (blob.size < n * 0.08) return;
@@ -372,7 +384,10 @@
       // 사진 거의 전체(바탕이 안 보임)거나, 사각형과 모양이 너무 다르면 버림
       if (area > n * 0.97 || area < n * 0.08 || fill < 0.8) return;
       if (touch > h * 0.5) return;                 // 사진 양옆에 절반 넘게 붙어 있으면 바탕일 가능성이 큼
-      best = { q: q };
+      var edge = q.filter(function (pt) { return pt.x <= 1 || pt.y <= 1 || pt.x >= w - 1 || pt.y >= h - 1; }).length;
+      if (edge >= 2) return;                       // 꼭짓점 2개 이상이 사진 끝 = 종이 일부나 바탕을 잘못 잡은 것
+      var score = fill - 0.08 * edge - 0.3 * touch / h;   // 모서리가 사진 끝에 닿으면 책상이 섞였을 가능성이 큼
+      if (!best || score > best.score + 0.01) best = { q: q, score: score, m: ci };
     });
     if (!best) return null;
     var k = src.width / w;
