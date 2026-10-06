@@ -487,3 +487,19 @@ label.mini.dis{opacity:.6;pointer-events:none}
 .bg-sum{margin-top:6px;background:var(--bg);border-radius:12px;padding:12px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));text-align:center;font-size:12px;color:var(--sub);gap:4px}
 .bg-sum b{display:block;font-size:15px;color:var(--ink);margin-top:3px}
 .bg-sum b.neg{color:#D2453B}
+
+/* 홈: 판독 대기·확인 필요 건수 */
+.chips{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.chip.warn{color:#B4532A;border-color:#F0C9B5;background:#FFF6F1;text-decoration:none;font-weight:600}
+
+/* 보관함: 달 선택·탭을 상세 화면 구역처럼 카드로 묶음 */
+.bx-sec{margin:0 20px 12px;background:#fff;border:1px solid #D9DEF5;border-radius:16px;overflow:hidden}
+.bx-sec-h{padding:10px 14px;font-size:13px;font-weight:700;color:#22379C;background:#EEF1FC;border-bottom:1px solid #D9DEF5;display:flex;align-items:center;gap:6px}
+.bx-sec-h::before{content:'';width:4px;height:14px;border-radius:2px;background:var(--accent)}
+.bx-sec .bx-month{padding:12px 14px 6px}
+.bx-sec .bx-tabs{margin:0 14px;border-bottom:0}
+/* 예산: 접대비·회의비 카드 머리를 상세·보관함 구역과 같은 파란 머리로 */
+.bg-card{padding:0 16px 16px;border-color:#D9DEF5;overflow:hidden}
+.bg-card h3{margin:0 -16px 4px;padding:10px 14px;font-size:13px;font-weight:700;color:#22379C;background:#EEF1FC;border-bottom:1px solid #D9DEF5;justify-content:flex-start;align-items:center;gap:6px}
+.bg-card h3::before{content:'';width:4px;height:14px;border-radius:2px;background:var(--accent)}
+.bg-card h3 small{margin-left:auto;color:#4A5BA8}
