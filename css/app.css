@@ -452,3 +452,38 @@ button.banner{display:block;width:calc(100% - 40px);text-align:left;border:0;cur
 .pc-ghint{font-size:12px;color:var(--sub)}
 label.mini{display:inline-flex;align-items:center;cursor:pointer}
 label.mini.dis{opacity:.6;pointer-events:none}
+
+/* 홈: 결제 수단별 금액(쓴 것만) · 구분 카드 2줄 */
+.total .paylist{display:flex;flex-direction:column;gap:7px;border-top:1px solid var(--dark-track);padding-top:12px}
+.total .paylist div{display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--dark-sub)}
+.total .paylist b{color:#fff;font-weight:600;white-space:nowrap}
+.total .paylist .sub{padding-left:12px;font-size:12px}
+.total .paylist .sub b{color:var(--dark-sub);font-weight:500}
+.grid2{margin-top:10px}
+.cat.small{min-height:auto}
+.cat .bar{position:relative;overflow:hidden}
+.cat .bar i{position:absolute;left:0;top:0;bottom:0;background:var(--accent);border-radius:3px}
+.cat .bar.over i{background:#D2453B}
+.cat .budget b{color:var(--ink);font-weight:600}
+.cat .budget b.neg{color:#D2453B}
+
+/* 예산 화면 */
+.bg-title{padding-top:4px}
+.bg-note{margin:4px 20px 14px;font-size:12.5px;color:var(--sub);line-height:1.6}
+.bg-card{margin:0 20px 12px;background:#fff;border:1px solid var(--line);border-radius:18px;padding:16px}
+.bg-card h3{margin:0 0 4px;font-size:16px;display:flex;justify-content:space-between;align-items:baseline}
+.bg-card h3 small{font-size:12px;color:var(--sub);font-weight:500}
+.bg-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-top:1px solid var(--line);font-size:14px;gap:10px}
+.bg-card h3 + .bg-row{border-top:0}
+.bg-row .l{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
+.bg-row .l small{font-size:11.5px;color:var(--sub)}
+.bg-r{display:flex;align-items:center;gap:2px}
+.bg-in{width:120px;flex:none;text-align:right;font:inherit;font-weight:600;padding:8px 10px;border:1px solid #D9D6CE;border-radius:10px;background:#FAFAF7;color:var(--ink)}
+.bg-in:focus,.bg-memo:focus{outline:2px solid var(--accent);outline-offset:-1px;background:#fff}
+.bg-memo{font:inherit;font-size:12px;color:var(--sub);border:0;border-bottom:1px dashed #D9D6CE;background:transparent;padding:3px 0;width:100%}
+.bg-x{border:0;background:none;color:#9A9DA4;font-size:20px;width:32px;height:36px;cursor:pointer}
+.bg-add{font-size:13px;color:var(--accent);background:none;border:0;padding:8px 0;font-weight:600;cursor:pointer}
+.bg-hint{font-size:11.5px;color:var(--accent);background:#EEF1FD;border-radius:8px;padding:5px 8px;margin-top:3px;align-self:flex-start}
+.bg-sum{margin-top:6px;background:var(--bg);border-radius:12px;padding:12px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));text-align:center;font-size:12px;color:var(--sub);gap:4px}
+.bg-sum b{display:block;font-size:15px;color:var(--ink);margin-top:3px}
+.bg-sum b.neg{color:#D2453B}
